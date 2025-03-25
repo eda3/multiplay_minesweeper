@@ -236,6 +236,27 @@ impl GameState {
                                 if let Some(game_data) = json["gameState"].as_object() {
                                     game_state.update_game_state(game_data);
                                 }
+                                
+                                // 新しい形式のリセットメッセージにも対応（トップレベルのプロパティ）
+                                let mut props = serde_json::Map::new();
+                                
+                                if let Some(width) = json["boardWidth"].as_i64() {
+                                    props.insert("boardWidth".to_string(), serde_json::json!(width));
+                                }
+                                
+                                if let Some(height) = json["boardHeight"].as_i64() {
+                                    props.insert("boardHeight".to_string(), serde_json::json!(height));
+                                }
+                                
+                                if let Some(mines) = json["mineCount"].as_i64() {
+                                    props.insert("mineCount".to_string(), serde_json::json!(mines));
+                                }
+                                
+                                // プロパティが取得できたら、ゲーム状態を更新
+                                if !props.is_empty() {
+                                    log("新しい形式のゲームリセットメッセージを処理しています");
+                                    game_state.update_game_state(&props);
+                                }
                             },
                             _ => {
                                 log(&format!("Unknown message type: {}", msg_type));
