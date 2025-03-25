@@ -296,6 +296,18 @@ impl GameState {
                                     log("新しい形式のゲームリセットメッセージを処理しています");
                                     game_state.update_game_state(&props);
                                 }
+                                
+                                // ゲーム状態を完全にリセット
+                                log("ゲームを完全にリセットします");
+                                game_state.cells = vec![CellValue::Empty(0); game_state.board_width * game_state.board_height];
+                                game_state.revealed = vec![false; game_state.board_width * game_state.board_height];
+                                game_state.flagged = vec![false; game_state.board_width * game_state.board_height];
+                                game_state.game_started = false;
+                                game_state.game_over = false;
+                                game_state.win = false;
+                                
+                                // ゲーム状態を更新
+                                game_state.update_game_status();
                             },
                             _ => {
                                 log(&format!("Unknown message type: {}", msg_type));
