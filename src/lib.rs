@@ -347,7 +347,7 @@ impl GameState {
                 // 位置更新の頻度を制限（100msごと）
                 if now - self.last_position_update >= 100.0 {
                     let message = serde_json::json!({
-                        "type": "position_update",
+                        "type": "player_move",
                         "x": player.x,
                         "y": player.y
                     });
