@@ -354,10 +354,17 @@ function handleConnection(ws) {
 
             // ゲームオーバーの場合は通知
             if (gameState.gameOver) {
+              // ゲームオーバー時は全てのセル情報を送信
+              const allCellValues = {};
+              for (let i = 0; i < gameState.cells.length; i++) {
+                allCellValues[i] = gameState.cells[i];
+              }
+
               const gameOverMessage = JSON.stringify({
                 type: 'game_over',
                 win: gameState.win,
-                cells: gameState.cells
+                cells: gameState.cells,
+                allCellValues: allCellValues
               });
 
               for (const client of clients.keys()) {

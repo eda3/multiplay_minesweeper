@@ -223,6 +223,45 @@ impl GameState {
                                     game_state.update_game_status();
                                 }
                             },
+                            "game_over" => {
+                                // ゲームオーバー
+                                game_state.game_over = true;
+                                
+                                // 勝利かどうか
+                                if let Some(win) = json["win"].as_bool() {
+                                    game_state.win = win;
+                                }
+                                
+                                // 全てのセル情報を受け取って表示
+                                if let Some(all_cell_values) = json["allCellValues"].as_object() {
+                                    log(&format!("ゲームオーバー：全てのセル情報を受信 ({} 個)", all_cell_values.len()));
+                                    
+                                    // 全てのセルの値を設定
+                                    for (index_str, value) in all_cell_values {
+                                        if let Ok(index) = index_str.parse::<usize>() {
+                                            if index < game_state.cells.len() {
+                                                if let Some(v) = value.as_i64() {
+                                                    if v == -1 {
+                                                        game_state.cells[index] = CellValue::Mine;
+                                                    } else {
+                                                        game_state.cells[index] = CellValue::Empty(v as u8);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // 地雷セルは表示、他は元のまま
+                                    for i in 0..game_state.cells.len() {
+                                        if matches!(game_state.cells[i], CellValue::Mine) {
+                                            game_state.revealed[i] = true;
+                                        }
+                                    }
+                                }
+                                
+                                // ゲーム状態を更新
+                                game_state.update_game_status();
+                            },
                             "flag_toggled" => {
                                 // フラグが切り替えられた
                                 if let Some(index) = json["index"].as_i64() {
