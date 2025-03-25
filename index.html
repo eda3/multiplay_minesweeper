@@ -73,8 +73,28 @@
     <button id="server-button">サーバー設定</button>
 
     <script type="module">
+        console.log('🔍 スクリプト初期化開始...');
+
+        // デバッグ用ヘルパー関数
+        function debug(category, message, data = null) {
+            const timestamp = new Date().toISOString().substr(11, 8);
+            const prefix = `[${timestamp}][${category}]`;
+
+            if (data) {
+                console.log(`${prefix} ${message}`, data);
+            } else {
+                console.log(`${prefix} ${message}`);
+            }
+        }
+
+        debug('INIT', 'ページ読み込み完了');
+        debug('ENV', `ユーザーエージェント: ${navigator.userAgent}`);
+        debug('ENV', `画面サイズ: ${window.innerWidth}x${window.innerHeight}`);
+
         // WebSocketサーバーのURL設定
         window.getWebSocketUrl = () => {
+            debug('WS', 'WebSocketURL取得処理開始');
+
             // 次のいずれかのURLを使用
             // 1. URLパラメータから指定された場合 (?server=wss://example.com)
             // 2. localStorageに保存されている場合
@@ -82,48 +102,69 @@
 
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('server')) {
-                return urlParams.get('server');
+                const serverUrl = urlParams.get('server');
+                debug('WS', `URLパラメータからサーバーを取得: ${serverUrl}`);
+                return serverUrl;
             }
 
             const savedServer = localStorage.getItem('minesweeper_server');
             if (savedServer) {
+                debug('WS', `LocalStorageからサーバーを取得: ${savedServer}`);
                 return savedServer;
             }
 
+            debug('WS', 'デフォルトのローカルサーバーを使用: ws://localhost:8080');
             return 'ws://localhost:8080';
         };
 
         // サーバー設定ボタンのイベント設定
         document.getElementById('server-button').addEventListener('click', () => {
+            debug('UI', 'サーバー設定ボタンがクリックされました');
+
             const currentServer = getWebSocketUrl();
+            debug('UI', `現在のサーバーURL: ${currentServer}`);
+
             const newServer = prompt('サーバーのURLを入力してください:', currentServer);
+            debug('UI', `入力された新しいサーバーURL: ${newServer}`);
 
             if (newServer && newServer.trim() !== '') {
+                debug('UI', `新しいサーバーURLを保存: ${newServer.trim()}`);
                 localStorage.setItem('minesweeper_server', newServer.trim());
                 alert('サーバー設定を保存しました。ページを再読み込みします。');
+                debug('UI', 'ページを再読み込みします...');
                 window.location.reload();
+            } else {
+                debug('UI', 'サーバーURL入力がキャンセルされました');
             }
         });
 
         // グローバルな関数定義（Rustから呼び出せるようにする）
         window.updateConnectionStatus = (connected) => {
+            debug('STATUS', `WebSocket接続状態の更新: ${connected ? '接続中' : '未接続'}`);
+
             const status = document.getElementById('connection-status');
             status.textContent = `WebSocket: ${connected ? '接続中' : '未接続'}`;
             status.style.color = connected ? '#8F8' : '#F88';
         };
 
         window.updatePlayerCount = (count) => {
+            debug('STATUS', `プレイヤー数の更新: ${count}人`);
+
             const playerCount = document.getElementById('player-count');
             playerCount.textContent = `プレイヤー数: ${count}`;
         };
 
         window.updateGameStatus = (status) => {
+            debug('GAME', `ゲーム状態の更新: ${status}`);
+
             const gameStatus = document.getElementById('game-status');
             gameStatus.textContent = status;
 
             if (status.includes('勝利')) {
+                debug('GAME', '🎉 ゲームクリア！');
                 gameStatus.style.color = '#8F8';
             } else if (status.includes('ゲームオーバー')) {
+                debug('GAME', '💥 ゲームオーバー...');
                 gameStatus.style.color = '#F88';
             } else {
                 gameStatus.style.color = 'white';
@@ -131,26 +172,62 @@
         };
 
         // WASMモジュールをインポート
+        debug('WASM', 'WASMモジュールのインポート開始');
         import init from './pkg/wasm_multiplayer.js';
 
+        // エラーハンドリング用関数
+        window.addEventListener('error', (event) => {
+            debug('ERROR', `グローバルエラー発生: ${event.message}`, {
+                filename: event.filename,
+                lineno: event.lineno,
+                colno: event.colno,
+                error: event.error
+            });
+        });
+
         async function start() {
+            debug('STARTUP', 'ゲーム起動シーケンス開始');
+
             try {
+                debug('WASM', 'WASMモジュール初期化開始');
                 // WASMモジュールを初期化
                 const wasm = await init();
+                debug('WASM', 'WASMモジュール初期化完了！');
 
                 // Canvasを取得
                 const canvas = document.getElementById('game-canvas');
+                debug('UI', `Canvas取得: ${canvas.width}x${canvas.height}`);
 
                 // ゲームを開始
+                debug('GAME', 'start_game関数を呼び出します');
                 wasm.start_game(canvas);
 
+                debug('GAME', '🎮 ゲーム起動成功！');
                 console.log("Game started successfully!");
             } catch (error) {
+                debug('ERROR', '⚠️ ゲーム起動中にエラーが発生しました', error);
                 console.error("Error starting game:", error);
+
+                // エラー詳細を表示
+                const errorMessage = document.createElement('div');
+                errorMessage.style.color = 'red';
+                errorMessage.style.backgroundColor = 'rgba(0,0,0,0.7)';
+                errorMessage.style.padding = '20px';
+                errorMessage.style.margin = '20px';
+                errorMessage.style.borderRadius = '5px';
+                errorMessage.innerHTML = `
+                    <h3>エラーが発生しました</h3>
+                    <p>${error.message}</p>
+                    <p>詳細はブラウザのコンソールを確認してください</p>
+                `;
+                document.body.appendChild(errorMessage);
             }
         }
 
+        // 開始処理
+        debug('STARTUP', 'アプリケーション起動');
         start();
+        debug('STARTUP', '起動処理完了');
     </script>
 </body>
 
