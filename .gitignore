@@ -1,3 +1,6 @@
 /target
 node_modules
 nohup.out
+server.crt
+server.csr
+server.key

@@ -254,6 +254,14 @@ function handleConnection(ws) {
     }
   }
 
+  // 既に開かれているセルの値を収集
+  const cellValues = {};
+  for (let i = 0; i < gameState.cells.length; i++) {
+    if (gameState.revealed[i]) {
+      cellValues[i] = gameState.cells[i];
+    }
+  }
+
   // 初期化メッセージを送信
   ws.send(JSON.stringify({
     type: 'init',
@@ -267,9 +275,12 @@ function handleConnection(ws) {
       flagged: gameState.flagged,
       gameStarted: gameState.gameStarted,
       gameOver: gameState.gameOver,
-      win: gameState.win
+      win: gameState.win,
+      cellValues: cellValues
     }
   }));
+
+  console.log(`プレイヤー ${playerId} に初期化データを送信しました。開かれたセル数: ${Object.keys(cellValues).length}`);
 
   // 他のプレイヤーに新規参加を通知
   const joinMessage = JSON.stringify({
@@ -283,96 +294,123 @@ function handleConnection(ws) {
   // メッセージ受信イベント
   ws.on('message', (message) => {
     try {
-      const data = JSON.parse(message.toString());
-      const clientInfo = clients.get(ws);
+      const data = JSON.parse(message);
 
+      // メッセージのタイプによって処理を分ける
       switch (data.type) {
-        case 'position_update':
-          // プレイヤーの位置更新
-          clientInfo.x = data.x;
-          clientInfo.y = data.y;
+        case 'player_move':
+          // プレイヤーの移動
+          if (data.x !== undefined && data.y !== undefined) {
+            const playerData = clients.get(ws);
+            playerData.x = data.x;
+            playerData.y = data.y;
 
-          const updateMessage = JSON.stringify({
-            type: 'player_moved',
-            id: clientInfo.id,
-            x: data.x,
-            y: data.y
-          });
-
-          broadcastExcept(ws, updateMessage);
+            // 他のクライアントに移動を通知
+            for (const client of clients.keys()) {
+              if (client !== ws && client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({
+                  type: 'player_moved',
+                  id: playerData.id,
+                  x: data.x,
+                  y: data.y
+                }));
+              }
+            }
+          }
           break;
 
         case 'reveal_cell':
           // セルを開く
-          const index = data.index;
+          if (data.index !== undefined) {
+            const index = data.index;
 
-          // ゲームが開始されていない場合は、最初のクリックで開始
-          if (!gameState.gameStarted) {
-            gameState.gameStarted = true;
-            placeMines(index);
-          }
-
-          // セルを開く
-          const revealedCells = revealCell(index);
-
-          // 結果を全員に送信
-          if (revealedCells.length > 0) {
-            const cellValues = {};
-            for (const idx of revealedCells) {
-              cellValues[idx] = gameState.cells[idx];
+            // ゲームが開始されていない場合は、最初のクリックで開始
+            if (!gameState.gameStarted) {
+              gameState.gameStarted = true;
+              placeMines(index);
             }
 
-            const revealMessage = JSON.stringify({
+            // セルを開く
+            const revealedCells = revealCell(index);
+
+            // 開かれたセルの値をマップ
+            const cellValues = {};
+            for (const cellIndex of revealedCells) {
+              cellValues[cellIndex] = gameState.cells[cellIndex];
+            }
+
+            // すべてのクライアントに通知
+            const updateMessage = JSON.stringify({
               type: 'cells_revealed',
               cells: revealedCells,
-              values: cellValues,
-              gameOver: gameState.gameOver,
-              win: gameState.win,
-              playerId: clientInfo.id
+              values: cellValues
             });
 
-            broadcast(revealMessage);
+            for (const client of clients.keys()) {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(updateMessage);
+              }
+            }
+
+            // ゲームオーバーの場合は通知
+            if (gameState.gameOver) {
+              const gameOverMessage = JSON.stringify({
+                type: 'game_over',
+                win: gameState.win,
+                cells: gameState.cells
+              });
+
+              for (const client of clients.keys()) {
+                if (client.readyState === WebSocket.OPEN) {
+                  client.send(gameOverMessage);
+                }
+              }
+            }
           }
           break;
 
         case 'toggle_flag':
           // フラグを切り替え
-          const flagIndex = data.index;
-          toggleFlag(flagIndex);
+          if (data.index !== undefined) {
+            const index = data.index;
+            toggleFlag(index);
 
-          const flagMessage = JSON.stringify({
-            type: 'flag_toggled',
-            index: flagIndex,
-            flagged: gameState.flagged[flagIndex],
-            playerId: clientInfo.id
-          });
+            // すべてのクライアントに通知
+            const flagMessage = JSON.stringify({
+              type: 'flag_toggled',
+              index: index,
+              flagged: gameState.flagged[index]
+            });
 
-          broadcast(flagMessage);
+            for (const client of clients.keys()) {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(flagMessage);
+              }
+            }
+          }
           break;
 
         case 'reset_game':
           // ゲームをリセット
           initializeGame();
 
+          // すべてのクライアントに通知
           const resetMessage = JSON.stringify({
             type: 'game_reset',
-            gameState: {
-              boardWidth: gameState.boardWidth,
-              boardHeight: gameState.boardHeight,
-              mineCount: gameState.mineCount,
-              revealed: gameState.revealed,
-              flagged: gameState.flagged,
-              gameStarted: gameState.gameStarted,
-              gameOver: gameState.gameOver,
-              win: gameState.win
-            }
+            boardWidth: gameState.boardWidth,
+            boardHeight: gameState.boardHeight,
+            mineCount: gameState.mineCount
           });
 
-          broadcast(resetMessage);
+          for (const client of clients.keys()) {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(resetMessage);
+            }
+          }
           break;
       }
     } catch (error) {
-      console.error('メッセージ解析エラー:', error);
+      console.error('メッセージ処理エラー:', error);
     }
   });
 

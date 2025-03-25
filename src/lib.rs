@@ -457,6 +457,26 @@ impl GameState {
             self.win = win;
         }
         
+        // 既に開かれたセルの値を設定
+        if let Some(cell_values) = game_data.get("cellValues").and_then(|v| v.as_object()) {
+            log(&format!("セル値を受信: {} 個", cell_values.len()));
+            
+            for (index_str, value) in cell_values {
+                if let Ok(index) = index_str.parse::<usize>() {
+                    if index < self.cells.len() {
+                        if let Some(v) = value.as_i64() {
+                            if v == -1 {
+                                self.cells[index] = CellValue::Mine;
+                            } else {
+                                self.cells[index] = CellValue::Empty(v as u8);
+                            }
+                            log(&format!("セル[{}]の値を{}に設定", index, v));
+                        }
+                    }
+                }
+            }
+        }
+        
         // ゲーム状態を更新
         self.update_game_status();
     }
