@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,12 +18,14 @@
             font-family: 'Arial', sans-serif;
             flex-direction: column;
         }
+
         #game-canvas {
             border: 1px solid #444;
             background-color: #000;
             cursor: pointer;
             margin-top: 50px;
         }
+
         #info {
             position: absolute;
             top: 10px;
@@ -33,12 +36,14 @@
             padding: 10px;
             border-radius: 5px;
         }
+
         #instructions {
             color: white;
             font-size: 14px;
             margin-top: 10px;
             text-align: center;
         }
+
         #server-button {
             position: absolute;
             top: 10px;
@@ -52,6 +57,7 @@
         }
     </style>
 </head>
+
 <body>
     <h1 style="color: white; margin-bottom: 10px;">マルチプレイヤー・マインスイーパー</h1>
     <canvas id="game-canvas" width="800" height="600"></canvas>
@@ -73,25 +79,25 @@
             // 1. URLパラメータから指定された場合 (?server=wss://example.com)
             // 2. localStorageに保存されている場合
             // 3. デフォルトはローカルの開発環境
-            
+
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('server')) {
                 return urlParams.get('server');
             }
-            
+
             const savedServer = localStorage.getItem('minesweeper_server');
             if (savedServer) {
                 return savedServer;
             }
-            
+
             return 'ws://localhost:8080';
         };
-        
+
         // サーバー設定ボタンのイベント設定
         document.getElementById('server-button').addEventListener('click', () => {
             const currentServer = getWebSocketUrl();
             const newServer = prompt('サーバーのURLを入力してください:', currentServer);
-            
+
             if (newServer && newServer.trim() !== '') {
                 localStorage.setItem('minesweeper_server', newServer.trim());
                 alert('サーバー設定を保存しました。ページを再読み込みします。');
@@ -105,16 +111,16 @@
             status.textContent = `WebSocket: ${connected ? '接続中' : '未接続'}`;
             status.style.color = connected ? '#8F8' : '#F88';
         };
-        
+
         window.updatePlayerCount = (count) => {
             const playerCount = document.getElementById('player-count');
             playerCount.textContent = `プレイヤー数: ${count}`;
         };
-        
+
         window.updateGameStatus = (status) => {
             const gameStatus = document.getElementById('game-status');
             gameStatus.textContent = status;
-            
+
             if (status.includes('勝利')) {
                 gameStatus.style.color = '#8F8';
             } else if (status.includes('ゲームオーバー')) {
@@ -131,13 +137,13 @@
             try {
                 // WASMモジュールを初期化
                 const wasm = await init();
-                
+
                 // Canvasを取得
                 const canvas = document.getElementById('game-canvas');
-                
+
                 // ゲームを開始
                 wasm.start_game(canvas);
-                
+
                 console.log("Game started successfully!");
             } catch (error) {
                 console.error("Error starting game:", error);
@@ -147,4 +153,5 @@
         start();
     </script>
 </body>
+
 </html>
