@@ -104,17 +104,20 @@
             if (urlParams.has('server')) {
                 const serverUrl = urlParams.get('server');
                 debug('WS', `URLパラメータからサーバーを取得: ${serverUrl}`);
-                return serverUrl;
+                // return serverUrl;
+                return 'wss://multi-minesweeper.eda3.dev:8443';
             }
 
             const savedServer = localStorage.getItem('minesweeper_server');
             if (savedServer) {
                 debug('WS', `LocalStorageからサーバーを取得: ${savedServer}`);
-                return savedServer;
+                // return savedServer;
+                return 'wss://multi-minesweeper.eda3.dev:8443';
             }
 
             debug('WS', 'デフォルトのローカルサーバーを使用: ws://localhost:8080');
-            return 'ws://localhost:8080';
+            // return 'wss://162.43.8.148:8080';
+            return 'wss://multi-minesweeper.eda3.dev:8443';
         };
 
         // サーバー設定ボタンのイベント設定

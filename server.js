@@ -1,15 +1,31 @@
 const WebSocket = require('ws');
+const http = require('http');
+const https = require('https'); // HTTPSモジュールを追加
+const fs = require('fs'); // ファイル読み込み用
+const express = require('express');
+const app = express();
 
 // サーバーの設定
 // Replitでは環境変数PORTが設定されているため使用
 // ローカル環境では8080をデフォルトポートとして使用
 const PORT = process.env.PORT || 8080;
+const HTTPS_PORT = 8443; // HTTPSポート
+
+// SSL証明書の読み込み（ファイルが存在する場合のみ）
+let httpsServer;
+try {
+  const credentials = {
+    key: fs.readFileSync('server.key'),
+    cert: fs.readFileSync('server.crt')
+  };
+  httpsServer = https.createServer(credentials, app);
+  console.log('SSL証明書を読み込みました。HTTPSサーバーを有効化します。');
+} catch (err) {
+  console.log('SSL証明書が見つかりません。HTTPサーバーのみで動作します。');
+  console.log('詳細エラー:', err.message);
+}
 
 // CORS対策を追加
-const http = require('http');
-const express = require('express');
-const app = express();
-
 // 接続しているクライアント一覧
 const clients = new Map();
 let nextPlayerId = 1;
@@ -42,21 +58,21 @@ function initializeGame() {
 function placeMines(firstClickIndex) {
   const { boardWidth, boardHeight, mineCount } = gameState;
   const totalCells = boardWidth * boardHeight;
-  
+
   // 最初にクリックしたセルとその周囲に地雷を配置しないようにする
   const excludedCells = getNeighbors(firstClickIndex);
   excludedCells.push(firstClickIndex);
-  
+
   // 地雷をランダムに配置
   let minesPlaced = 0;
   while (minesPlaced < mineCount) {
     const randomIndex = Math.floor(Math.random() * totalCells);
-    
+
     // 既に地雷がある場所や除外セルには配置しない
     if (gameState.cells[randomIndex] !== -1 && !excludedCells.includes(randomIndex)) {
       gameState.cells[randomIndex] = -1; // -1 は地雷を表す
       minesPlaced++;
-      
+
       // 周囲のセルのカウントを増やす
       const neighbors = getNeighbors(randomIndex);
       for (const neighbor of neighbors) {
@@ -73,78 +89,78 @@ function getNeighbors(index) {
   const { boardWidth, boardHeight } = gameState;
   const x = index % boardWidth;
   const y = Math.floor(index / boardWidth);
-  
+
   const neighbors = [];
-  
+
   for (let dy = -1; dy <= 1; dy++) {
     for (let dx = -1; dx <= 1; dx++) {
       if (dx === 0 && dy === 0) continue;
-      
+
       const newX = x + dx;
       const newY = y + dy;
-      
+
       if (newX >= 0 && newX < boardWidth && newY >= 0 && newY < boardHeight) {
         neighbors.push(newY * boardWidth + newX);
       }
     }
   }
-  
+
   return neighbors;
 }
 
 // セルを開く
 function revealCell(index) {
   const { boardWidth, boardHeight, cells, revealed, flagged, gameOver } = gameState;
-  
+
   // 既に開かれている、フラグが立てられている、またはゲームオーバーの場合は何もしない
   if (revealed[index] || flagged[index] || gameOver) {
     return [];
   }
-  
+
   // このセルを開く
   revealed[index] = true;
-  
+
   // 開かれたセルのリスト
   const revealedCells = [index];
-  
+
   // 地雷を開いた場合はゲームオーバー
   if (cells[index] === -1) {
     gameState.gameOver = true;
     return revealedCells;
   }
-  
+
   // 数字が0の場合は周囲のセルも開く（再帰的に）
   if (cells[index] === 0) {
     const neighbors = getNeighbors(index);
     for (const neighbor of neighbors) {
       // 既に開かれている場合はスキップ
       if (revealed[neighbor]) continue;
-      
+
       // 再帰的に開く
       const additionalRevealed = revealCell(neighbor);
       revealedCells.push(...additionalRevealed);
     }
   }
-  
+
   // 勝利条件をチェック
   checkWinCondition();
-  
+
   return revealedCells;
 }
 
 // 勝利条件をチェック
 function checkWinCondition() {
   const { boardWidth, boardHeight, cells, revealed, gameOver } = gameState;
-  
+
   if (gameOver) return;
-  
+
   // すべての非地雷セルが開かれているかチェック
   for (let i = 0; i < boardWidth * boardHeight; i++) {
     if (cells[i] !== -1 && !revealed[i]) {
       return; // まだ開かれていないセルがある
     }
   }
-  
+
   // 勝利！
   gameState.win = true;
   gameState.gameOver = true;
@@ -153,19 +169,19 @@ function checkWinCondition() {
 // フラグを切り替え
 function toggleFlag(index) {
   const { revealed, flagged, gameOver } = gameState;
-  
+
   // 既に開かれている、またはゲームオーバーの場合は何もしない
   if (revealed[index] || gameOver) {
     return;
   }
-  
+
   // フラグを切り替え
   flagged[index] = !flagged[index];
 }
 
 // ルートアクセス時にサーバー情報を表示
 app.get('/', (req, res) => {
-    res.send(`
+  res.send(`
         <h1>Minesweeper WebSocket Server</h1>
         <p>This server is running on port ${PORT}</p>
         <p>Connected clients: ${clients.size}</p>
@@ -174,15 +190,29 @@ app.get('/', (req, res) => {
     `);
 });
 
-// サーバー作成
+// HTTPサーバー作成
 const server = http.createServer(app);
 
-// WebSocketサーバーをポートで起動
+// WebSocketサーバーをHTTPサーバーに接続
 const wss = new WebSocket.Server({ server });
+
+// HTTPSサーバーが存在する場合は、そこにもWebSocketサーバーを接続
+let wssSecure;
+if (httpsServer) {
+  wssSecure = new WebSocket.Server({ server: httpsServer });
+
+  // セキュアなWebSocketサーバーにも同じイベントハンドラを設定
+  wssSecure.on('connection', handleConnection);
+
+  // HTTPSサーバーを起動
+  httpsServer.listen(HTTPS_PORT, () => {
+    console.log(`セキュアなWebSocketサーバーを起動しました (ポート: ${HTTPS_PORT})`);
+  });
+}
 
 // サーバーを指定ポートで起動
 server.listen(PORT, () => {
-    console.log(`WebSocketサーバーを起動しました (ポート: ${PORT})`);
+  console.log(`WebSocketサーバーを起動しました (ポート: ${PORT})`);
 });
 
 // ゲームを初期化
@@ -190,32 +220,32 @@ initializeGame();
 
 // 定期的にピングを送信して接続を維持
 setInterval(() => {
-    for (const client of clients.keys()) {
-        if (client.readyState === WebSocket.OPEN) {
-            client.ping();
-        }
+  for (const client of clients.keys()) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.ping();
     }
+  }
 }, 30000);
 
-// 接続イベント
-wss.on('connection', (ws) => {
+// 接続イベントハンドラーを関数として抽出
+function handleConnection(ws) {
   // 新しいクライアントにIDを付与
   const playerId = `player_${nextPlayerId++}`;
   console.log(`新しいプレイヤーが接続しました: ${playerId}`);
-  
+
   // クライアントをマップに保存
-  clients.set(ws, { 
+  clients.set(ws, {
     id: playerId,
     x: 0,
     y: 0,
     color: generateRandomColor()
   });
-  
+
   // 接続しているプレイヤー情報を新規クライアントに送信
   const playerList = [];
   for (const [client, data] of clients.entries()) {
     if (client !== ws) {
-      playerList.push({ 
+      playerList.push({
         id: data.id,
         x: data.x,
         y: data.y,
@@ -223,7 +253,7 @@ wss.on('connection', (ws) => {
       });
     }
   }
-  
+
   // 初期化メッセージを送信
   ws.send(JSON.stringify({
     type: 'init',
@@ -240,58 +270,58 @@ wss.on('connection', (ws) => {
       win: gameState.win
     }
   }));
-  
+
   // 他のプレイヤーに新規参加を通知
   const joinMessage = JSON.stringify({
     type: 'player_joined',
     id: playerId,
     color: clients.get(ws).color
   });
-  
+
   broadcastExcept(ws, joinMessage);
-  
+
   // メッセージ受信イベント
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message.toString());
       const clientInfo = clients.get(ws);
-      
+
       switch (data.type) {
         case 'position_update':
           // プレイヤーの位置更新
           clientInfo.x = data.x;
           clientInfo.y = data.y;
-          
+
           const updateMessage = JSON.stringify({
             type: 'player_moved',
             id: clientInfo.id,
             x: data.x,
             y: data.y
           });
-          
+
           broadcastExcept(ws, updateMessage);
           break;
-          
+
         case 'reveal_cell':
           // セルを開く
           const index = data.index;
-          
+
           // ゲームが開始されていない場合は、最初のクリックで開始
           if (!gameState.gameStarted) {
             gameState.gameStarted = true;
             placeMines(index);
           }
-          
+
           // セルを開く
           const revealedCells = revealCell(index);
-          
+
           // 結果を全員に送信
           if (revealedCells.length > 0) {
             const cellValues = {};
             for (const idx of revealedCells) {
               cellValues[idx] = gameState.cells[idx];
             }
-            
+
             const revealMessage = JSON.stringify({
               type: 'cells_revealed',
               cells: revealedCells,
@@ -300,30 +330,30 @@ wss.on('connection', (ws) => {
               win: gameState.win,
               playerId: clientInfo.id
             });
-            
+
             broadcast(revealMessage);
           }
           break;
-          
+
         case 'toggle_flag':
           // フラグを切り替え
           const flagIndex = data.index;
           toggleFlag(flagIndex);
-          
+
           const flagMessage = JSON.stringify({
             type: 'flag_toggled',
             index: flagIndex,
             flagged: gameState.flagged[flagIndex],
             playerId: clientInfo.id
           });
-          
+
           broadcast(flagMessage);
           break;
-          
+
         case 'reset_game':
           // ゲームをリセット
           initializeGame();
-          
+
           const resetMessage = JSON.stringify({
             type: 'game_reset',
             gameState: {
@@ -337,7 +367,7 @@ wss.on('connection', (ws) => {
               win: gameState.win
             }
           });
-          
+
           broadcast(resetMessage);
           break;
       }
@@ -345,30 +375,33 @@ wss.on('connection', (ws) => {
       console.error('メッセージ解析エラー:', error);
     }
   });
-  
+
   // 切断イベント
   ws.on('close', () => {
     const clientInfo = clients.get(ws);
     if (clientInfo) {
       console.log(`プレイヤーが切断しました: ${clientInfo.id}`);
-      
+
       // 切断したプレイヤーを全員に通知
       const leaveMessage = JSON.stringify({
         type: 'player_left',
         id: clientInfo.id
       });
       broadcastExcept(ws, leaveMessage);
-      
+
       // クライアントマップから削除
       clients.delete(ws);
-      
+
       // プレイヤーがいなくなったらゲームをリセット
       if (clients.size === 0) {
         initializeGame();
       }
     }
   });
-});
+}
+
+// 通常の接続イベント処理を関数に置き換え
+wss.on('connection', handleConnection);
 
 // 全クライアントにメッセージを送信
 function broadcast(message) {
