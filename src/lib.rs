@@ -1,5 +1,3 @@
-    #[wasm_bindgen(js_name = getWebSocketUrl)]
-    fn get_websocket_url() -> String;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, WebSocket, MessageEvent};
