@@ -20,6 +20,8 @@ use std::cell::RefCell;
 mod js_bindings;
 mod models;
 mod game_state;
+mod utils;
+mod rendering;
 
 // サブモジュールからの要素をインポート
 use js_bindings::{log, request_animation_frame};
