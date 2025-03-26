@@ -24,7 +24,8 @@ mod utils;
 mod rendering;
 mod network;
 mod board;
-mod components;
+mod components; // ECSコンポーネント
+mod resources;  // ECSリソース
 
 // サブモジュールからの要素をインポート
 use js_bindings::{log, request_animation_frame};
