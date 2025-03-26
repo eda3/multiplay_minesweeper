@@ -22,6 +22,7 @@ mod models;
 mod game_state;
 mod utils;
 mod rendering;
+mod network;
 
 // サブモジュールからの要素をインポート
 use js_bindings::{log, request_animation_frame};
