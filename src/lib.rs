@@ -14,64 +14,16 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, WebSocket, MessageEvent};
 use std::collections::HashMap;
-use js_sys::Math;
-use serde::{Serialize, Deserialize};
 use std::rc::Rc;
 use std::cell::RefCell;
 
-// JavaScriptの関数を呼び出すためのユーティリティ
-#[wasm_bindgen]
-extern "C" {
-    // JavaScriptのconsole.log関数を呼び出すためのバインディング
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-    
-    // JavaScriptのグローバル関数
-    // 接続状態をUIに表示するための関数
-    #[wasm_bindgen(js_name = updateConnectionStatus)]
-    fn update_connection_status(connected: bool);
-    
-    // プレイヤー数をUIに表示するための関数
-    #[wasm_bindgen(js_name = updatePlayerCount)]
-    fn update_player_count(count: usize);
-    
-    // ゲーム状態をUIに表示するための関数
-    #[wasm_bindgen(js_name = updateGameStatus)]
-    fn update_game_status(status: &str);
-    
-    // WebSocketのURLを取得するための関数
-    #[wasm_bindgen(js_name = getWebSocketUrl)]
-    fn get_websocket_url() -> String;
-}
+// サブモジュールを登録
+mod js_bindings;
+mod models;
 
-/**
- * セルの状態を表す列挙型
- */
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CellValue {
-    Mine,           // 地雷
-    Empty(u8),      // 空白（周囲の地雷数）
-}
-
-/**
- * 画面状態を表す列挙型
- */
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Screen {
-    Title,  // タイトル画面
-    Game,   // ゲーム画面
-}
-
-/**
- * プレイヤー情報を表す構造体
- */
-#[derive(Clone, Serialize, Deserialize)]
-struct Player {
-    id: String,      // プレイヤーID
-    x: f64,          // X座標
-    y: f64,          // Y座標
-    color: String,   // カーソルの色
-}
+// サブモジュールからの要素をインポート
+use js_bindings::{log, update_connection_status, update_player_count, update_game_status, get_websocket_url, request_animation_frame};
+use models::{CellValue, Screen, Player};
 
 /**
  * ゲーム全体の状態を管理する構造体
@@ -1221,21 +1173,6 @@ pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
     request_animation_frame(g.borrow().as_ref().unwrap());
     
     Ok(())
-}
-
-/**
- * アニメーションフレームをリクエストする
- * 
- * ブラウザの次の描画タイミングでコールバックを実行するようにリクエストします。
- * ゲームのアニメーションループを実現するために使用されます。
- * 
- * @param f 次のフレームで実行するクロージャ
- */
-fn request_animation_frame(f: &Closure<dyn FnMut()>) {
-    web_sys::window()
-        .unwrap()
-        .request_animation_frame(f.as_ref().unchecked_ref())
-        .unwrap();
 }
 
 // パニックハンドラのセットアップ
