@@ -8,6 +8,7 @@ use crate::models::{CellValue, Screen, Player};
 use crate::utils::get_cell_index_from_coordinates;
 use crate::rendering::GameRenderer;
 use crate::network::{NetworkManager, MessageCallback};
+use crate::board::Board;
 
 /**
  * ゲーム全体の状態を管理する構造体
@@ -34,17 +35,8 @@ pub struct GameState {
     // 画面状態
     pub current_screen: Screen,           // 現在の画面
     
-    // マインスイーパー特有の状態
-    pub board_width: usize,               // ボードの幅
-    pub board_height: usize,              // ボードの高さ
-    pub mine_count: usize,                // 地雷の数
-    pub cell_size: f64,                   // セルのサイズ
-    pub cells: Vec<CellValue>,            // セルの値
-    pub revealed: Vec<bool>,              // セルが開かれたかどうか
-    pub flagged: Vec<bool>,               // フラグが立てられたかどうか
-    pub game_started: bool,               // ゲームが開始されたかどうか
-    pub game_over: bool,                  // ゲームオーバーかどうか
-    pub win: bool,                        // 勝利したかどうか
+    // ボード関連
+    pub board: Board,                     // ゲームボード
 }
 
 impl GameState {
@@ -74,6 +66,9 @@ impl GameState {
 
         // ネットワークマネージャーの作成
         let network = NetworkManager::new();
+        
+        // ボードの作成
+        let board = Board::new(board_width, board_height, mine_count, cell_size);
 
         Ok(Self {
             local_player_id: None,
@@ -87,17 +82,7 @@ impl GameState {
             is_mouse_down: false,
             last_position_update: 0.0,
             current_screen: Screen::Title,  // 初期画面はタイトル画面
-            
-            board_width,
-            board_height,
-            mine_count,
-            cell_size,
-            cells: vec![CellValue::Empty(0); board_width * board_height],
-            revealed: vec![false; board_width * board_height],
-            flagged: vec![false; board_width * board_height],
-            game_started: false,
-            game_over: false,
-            win: false,
+            board,
         })
     }
 
@@ -164,15 +149,15 @@ impl GameState {
                                 for cell in cells {
                                     if let Some(index) = cell.as_i64() {
                                         let index = index as usize;
-                                        game_state.revealed[index] = true;
+                                        game_state.board.revealed[index] = true;
                                         
                                         // セルの値を設定
                                         if let Some(value) = values.get(&index.to_string()) {
                                             if let Some(v) = value.as_i64() {
                                                 if v == -1 {
-                                                    game_state.cells[index] = CellValue::Mine;
+                                                    game_state.board.cells[index] = CellValue::Mine;
                                                 } else {
-                                                    game_state.cells[index] = CellValue::Empty(v as u8);
+                                                    game_state.board.cells[index] = CellValue::Empty(v as u8);
                                                 }
                                             }
                                         }
@@ -181,12 +166,12 @@ impl GameState {
                                 
                                 // ゲームオーバーかどうか
                                 if let Some(game_over) = json["gameOver"].as_bool() {
-                                    game_state.game_over = game_over;
+                                    game_state.board.game_over = game_over;
                                 }
                                 
                                 // 勝利かどうか
                                 if let Some(win) = json["win"].as_bool() {
-                                    game_state.win = win;
+                                    game_state.board.win = win;
                                 }
                                 
                                 // ゲーム状態を更新
@@ -196,11 +181,11 @@ impl GameState {
                     },
                     "game_over" => {
                         // ゲームオーバー
-                        game_state.game_over = true;
+                        game_state.board.game_over = true;
                         
                         // 勝利かどうか
                         if let Some(win) = json["win"].as_bool() {
-                            game_state.win = win;
+                            game_state.board.win = win;
                         }
                         
                         // 全てのセル情報を受け取って表示
@@ -210,12 +195,12 @@ impl GameState {
                             // 全てのセルの値を設定
                             for (index_str, value) in all_cell_values {
                                 if let Ok(index) = index_str.parse::<usize>() {
-                                    if index < game_state.cells.len() {
+                                    if index < game_state.board.cells.len() {
                                         if let Some(v) = value.as_i64() {
                                             if v == -1 {
-                                                game_state.cells[index] = CellValue::Mine;
+                                                game_state.board.cells[index] = CellValue::Mine;
                                             } else {
-                                                game_state.cells[index] = CellValue::Empty(v as u8);
+                                                game_state.board.cells[index] = CellValue::Empty(v as u8);
                                             }
                                         }
                                     }
@@ -223,9 +208,9 @@ impl GameState {
                             }
                             
                             // 地雷セルは表示、他は元のまま
-                            for i in 0..game_state.cells.len() {
-                                if let CellValue::Mine = game_state.cells[i] {
-                                    game_state.revealed[i] = true;
+                            for i in 0..game_state.board.cells.len() {
+                                if let CellValue::Mine = game_state.board.cells[i] {
+                                    game_state.board.revealed[i] = true;
                                 }
                             }
                         }
@@ -237,9 +222,9 @@ impl GameState {
                         // フラグが切り替えられた
                         if let Some(index) = json["index"].as_i64() {
                             let index = index as usize;
-                            if index < game_state.flagged.len() {
+                            if index < game_state.board.flagged.len() {
                                 if let Some(flagged) = json["flagged"].as_bool() {
-                                    game_state.flagged[index] = flagged;
+                                    game_state.board.flagged[index] = flagged;
                                 }
                             }
                         }
@@ -360,76 +345,13 @@ impl GameState {
      * @param game_data サーバーから受信したゲーム状態データ
      */
     pub fn update_game_state(&mut self, game_data: &serde_json::Map<String, serde_json::Value>) {
-        if let Some(width) = game_data.get("boardWidth").and_then(|v| v.as_i64()) {
-            self.board_width = width as usize;
-        }
+        // ボードの更新を委譲
+        self.board.update_from_server(game_data);
         
-        if let Some(height) = game_data.get("boardHeight").and_then(|v| v.as_i64()) {
-            self.board_height = height as usize;
-        }
+        // セルサイズの更新（キャンバスサイズが必要なため、ここで行う）
+        self.board.cell_size = ((self.canvas.width() as f64).min(self.canvas.height() as f64) - 40.0) / self.board.width as f64;
         
-        if let Some(mines) = game_data.get("mineCount").and_then(|v| v.as_i64()) {
-            self.mine_count = mines as usize;
-        }
-        
-        // セルサイズを更新
-        self.cell_size = ((self.canvas.width() as f64).min(self.canvas.height() as f64) - 40.0) / self.board_width as f64;
-        
-        // ボードを初期化
-        self.cells = vec![CellValue::Empty(0); self.board_width * self.board_height];
-        
-        // revealed配列を更新
-        if let Some(revealed) = game_data.get("revealed").and_then(|v| v.as_array()) {
-            self.revealed = revealed.iter()
-                .map(|v| v.as_bool().unwrap_or(false))
-                .collect();
-        } else {
-            self.revealed = vec![false; self.board_width * self.board_height];
-        }
-        
-        // flagged配列を更新
-        if let Some(flagged) = game_data.get("flagged").and_then(|v| v.as_array()) {
-            self.flagged = flagged.iter()
-                .map(|v| v.as_bool().unwrap_or(false))
-                .collect();
-        } else {
-            self.flagged = vec![false; self.board_width * self.board_height];
-        }
-        
-        // ゲーム状態を更新
-        if let Some(started) = game_data.get("gameStarted").and_then(|v| v.as_bool()) {
-            self.game_started = started;
-        }
-        
-        if let Some(over) = game_data.get("gameOver").and_then(|v| v.as_bool()) {
-            self.game_over = over;
-        }
-        
-        if let Some(win) = game_data.get("win").and_then(|v| v.as_bool()) {
-            self.win = win;
-        }
-        
-        // 既に開かれたセルの値を設定
-        if let Some(cell_values) = game_data.get("cellValues").and_then(|v| v.as_object()) {
-            log(&format!("セル値を受信: {} 個", cell_values.len()));
-            
-            for (index_str, value) in cell_values {
-                if let Ok(index) = index_str.parse::<usize>() {
-                    if index < self.cells.len() {
-                        if let Some(v) = value.as_i64() {
-                            if v == -1 {
-                                self.cells[index] = CellValue::Mine;
-                            } else {
-                                self.cells[index] = CellValue::Empty(v as u8);
-                            }
-                            log(&format!("セル[{}]の値を{}に設定", index, v));
-                        }
-                    }
-                }
-            }
-        }
-        
-        // ゲーム状態を更新
+        // ゲーム状態の表示を更新
         self.update_game_status();
     }
 
@@ -439,13 +361,13 @@ impl GameState {
      * 現在のゲーム状態に基づいてUIに表示するステータスを更新します。
      */
     pub fn update_game_status(&self) {
-        let status = if self.game_over {
-            if self.win {
+        let status = if self.board.game_over {
+            if self.board.win {
                 "勝利！"
             } else {
                 "ゲームオーバー！"
             }
-        } else if self.game_started {
+        } else if self.board.game_started {
             "ゲーム中..."
         } else {
             "ゲーム開始待ち..."
@@ -465,22 +387,10 @@ impl GameState {
      * @return セルのインデックス（Option<usize>）
      */
     pub fn get_cell_index(&self, x: f64, y: f64) -> Option<usize> {
-        // ボードの左上の座標
-        let board_left = (self.canvas.width() as f64 - self.cell_size * self.board_width as f64) / 2.0;
-        let board_top = (self.canvas.height() as f64 - self.cell_size * self.board_height as f64) / 2.0;
+        let canvas_width = self.canvas.width() as f64;
+        let canvas_height = self.canvas.height() as f64;
         
-        // ボード外の場合はNone
-        if x < board_left || x >= board_left + self.cell_size * self.board_width as f64 ||
-           y < board_top || y >= board_top + self.cell_size * self.board_height as f64 {
-            return None;
-        }
-        
-        // セルの座標を計算
-        let cell_x = ((x - board_left) / self.cell_size) as usize;
-        let cell_y = ((y - board_top) / self.cell_size) as usize;
-        
-        // インデックスを返す
-        Some(cell_y * self.board_width + cell_x)
+        self.board.get_cell_index(x, y, canvas_width, canvas_height)
     }
 
     /**
@@ -528,12 +438,12 @@ impl GameState {
             Screen::Game => {
                 // ボードを描画
                 self.renderer.draw_board(
-                    &self.cells,
-                    &self.revealed,
-                    &self.flagged,
-                    self.board_width,
-                    self.board_height,
-                    self.cell_size,
+                    &self.board.cells,
+                    &self.board.revealed,
+                    &self.board.flagged,
+                    self.board.width,
+                    self.board.height,
+                    self.board.cell_size,
                     canvas_width,
                     canvas_height
                 )?;
@@ -548,8 +458,8 @@ impl GameState {
                 self.renderer.draw_connection_status(self.network.is_connected)?;
                 
                 // ゲームオーバー時の処理
-                if self.game_over {
-                    if self.win {
+                if self.board.game_over {
+                    if self.board.win {
                         self.renderer.draw_win_screen(canvas_width, canvas_height)?;
                     } else {
                         self.renderer.draw_game_over_screen(canvas_width, canvas_height)?;
@@ -654,12 +564,12 @@ impl GameState {
      */
     pub fn reveal_cell(&mut self, index: usize) -> Result<(), JsValue> {
         // すでに開かれている、またはフラグが立っている場合は何もしない
-        if self.revealed[index] || self.flagged[index] {
+        if self.board.revealed[index] || self.board.flagged[index] {
             return Ok(());
         }
         
         // ゲームオーバーの場合は何もしない
-        if self.game_over {
+        if self.board.game_over {
             return Ok(());
         }
         
@@ -675,12 +585,12 @@ impl GameState {
      */
     pub fn toggle_flag(&mut self, index: usize) -> Result<(), JsValue> {
         // すでに開かれている場合は何もしない
-        if self.revealed[index] {
+        if self.board.revealed[index] {
             return Ok(());
         }
         
         // ゲームオーバーの場合は何もしない
-        if self.game_over {
+        if self.board.game_over {
             return Ok(());
         }
         
