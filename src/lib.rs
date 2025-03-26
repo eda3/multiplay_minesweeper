@@ -62,6 +62,7 @@ struct GameState {
     is_mouse_down: bool,
     last_position_update: f64,
     current_screen: Screen,  // 現在の画面状態
+    is_connected: bool,  // 接続状態を追加
     
     // マインスイーパー特有の状態
     board_width: usize,
@@ -103,6 +104,7 @@ impl GameState {
             is_mouse_down: false,
             last_position_update: 0.0,
             current_screen: Screen::Title,  // 初期画面はタイトル画面
+            is_connected: false,  // 初期状態は未接続
             
             board_width,
             board_height,
@@ -124,11 +126,15 @@ impl GameState {
         log(&format!("Connecting to WebSocket server at: {}", server_url));
         
         let ws = WebSocket::new(&server_url)?;
+        let this = self as *mut GameState;
 
         // onopen: 接続成功時のコールバック
         let onopen_callback = Closure::wrap(Box::new(move || {
             log("WebSocket connected!");
             update_connection_status(true);
+            unsafe {
+                (*this).is_connected = true;  // 接続状態を更新
+            }
         }) as Box<dyn FnMut()>);
         ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
         onopen_callback.forget();
@@ -137,15 +143,12 @@ impl GameState {
         self.websocket = Some(ws.clone());
 
         // onmessage: メッセージ受信時のコールバック
-        let this = self as *mut GameState; // 安全ではないが、クロージャー内でselfを使うためのワークアラウンド
-
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
             if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                 let message = String::from(txt);
                 log(&format!("Message received: {}", message));
                 
                 // 安全ではない生ポインタを安全な参照に変換
-                // クラッシュを避けるために、これはコールバック内でのみ使用されることに注意
                 let game_state = unsafe { &mut *this };
                 
                 // JSONをパース
@@ -336,6 +339,9 @@ impl GameState {
         let onerror_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
             log("WebSocket error");
             update_connection_status(false);
+            unsafe {
+                (*this).is_connected = false;  // 接続状態を更新
+            }
         }) as Box<dyn FnMut(web_sys::Event)>);
         ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
         onerror_callback.forget();
@@ -344,6 +350,9 @@ impl GameState {
         let onclose_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
             log("WebSocket closed");
             update_connection_status(false);
+            unsafe {
+                (*this).is_connected = false;  // 接続状態を更新
+            }
         }) as Box<dyn FnMut(web_sys::Event)>);
         ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
         onclose_callback.forget();
@@ -814,6 +823,9 @@ impl GameState {
                 
                 // UIを描画
                 self.draw_ui()?;
+                
+                // 接続状態を描画
+                self.draw_connection_status()?;
             }
         }
         
@@ -872,6 +884,34 @@ impl GameState {
         Ok(())
     }
 
+    // 接続状態を描画
+    fn draw_connection_status(&self) -> Result<(), JsValue> {
+        let ctx = &self.context;
+        let canvas_width = self.canvas.width() as f64;
+        
+        // 接続状態の色を設定
+        let (color, text) = if self.is_connected {
+            ("#4CAF50", "接続中")
+        } else {
+            ("#FF0000", "未接続")
+        };
+        
+        // 接続状態の背景
+        ctx.set_fill_style(&JsValue::from_str(color));
+        ctx.begin_path();
+        ctx.arc(30.0, 30.0, 10.0, 0.0, std::f64::consts::PI * 2.0)?;
+        ctx.fill();
+        
+        // 接続状態のテキスト
+        ctx.set_fill_style(&JsValue::from_str("#FFFFFF"));
+        ctx.set_font("16px Arial");
+        ctx.set_text_align("left");
+        ctx.set_text_baseline("middle");
+        ctx.fill_text(text, 50.0, 30.0)?;
+        
+        Ok(())
+    }
+
     // タイトル画面を描画
     fn draw_title_screen(&self) -> Result<(), JsValue> {
         let ctx = &self.context;
@@ -916,6 +956,9 @@ impl GameState {
             button_x,
             button_y,
         )?;
+        
+        // 接続状態を描画
+        self.draw_connection_status()?;
         
         Ok(())
     }
