@@ -1,3 +1,15 @@
+/**
+ * マルチプレイヤーマインスイーパーゲーム
+ * 
+ * このモジュールは、WebAssemblyを使用したマルチプレイヤーマインスイーパーゲームの
+ * フロントエンド部分を実装しています。WebSocketを使用してサーバーと通信し、
+ * マルチプレイヤーでマインスイーパーを楽しむことができます。
+ * 
+ * 機能:
+ * - WebSocketを使用したリアルタイム通信
+ * - マルチプレイヤー対応（他のプレイヤーのカーソル表示）
+ * - マインスイーパーの基本ルール（地雷回避、数字表示など）
+ */
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement, WebSocket, MessageEvent};
@@ -10,74 +22,102 @@ use std::cell::RefCell;
 // JavaScriptの関数を呼び出すためのユーティリティ
 #[wasm_bindgen]
 extern "C" {
+    // JavaScriptのconsole.log関数を呼び出すためのバインディング
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
     
     // JavaScriptのグローバル関数
+    // 接続状態をUIに表示するための関数
     #[wasm_bindgen(js_name = updateConnectionStatus)]
     fn update_connection_status(connected: bool);
     
+    // プレイヤー数をUIに表示するための関数
     #[wasm_bindgen(js_name = updatePlayerCount)]
     fn update_player_count(count: usize);
     
+    // ゲーム状態をUIに表示するための関数
     #[wasm_bindgen(js_name = updateGameStatus)]
     fn update_game_status(status: &str);
     
+    // WebSocketのURLを取得するための関数
     #[wasm_bindgen(js_name = getWebSocketUrl)]
     fn get_websocket_url() -> String;
 }
 
-// セルの状態
+/**
+ * セルの状態を表す列挙型
+ */
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CellValue {
     Mine,           // 地雷
     Empty(u8),      // 空白（周囲の地雷数）
 }
 
-// 画面状態
+/**
+ * 画面状態を表す列挙型
+ */
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
     Title,  // タイトル画面
     Game,   // ゲーム画面
 }
 
-// ------ プレイヤー構造体 ------ //
+/**
+ * プレイヤー情報を表す構造体
+ */
 #[derive(Clone, Serialize, Deserialize)]
 struct Player {
-    id: String,
-    x: f64,
-    y: f64,
-    color: String,
+    id: String,      // プレイヤーID
+    x: f64,          // X座標
+    y: f64,          // Y座標
+    color: String,   // カーソルの色
 }
 
-// ------ ゲーム状態 ------ //
+/**
+ * ゲーム全体の状態を管理する構造体
+ */
 struct GameState {
-    local_player_id: Option<String>,
-    players: HashMap<String, Player>,
-    websocket: Option<WebSocket>,
-    canvas: HtmlCanvasElement,
-    context: CanvasRenderingContext2d,
-    mouse_x: f64,
-    mouse_y: f64,
-    is_mouse_down: bool,
-    last_position_update: f64,
-    current_screen: Screen,  // 現在の画面状態
-    is_connected: bool,  // 接続状態を追加
+    // プレイヤー関連
+    local_player_id: Option<String>,  // ローカルプレイヤーのID
+    players: HashMap<String, Player>, // 全プレイヤーの情報
+
+    // 通信関連
+    websocket: Option<WebSocket>,     // WebSocketオブジェクト
+    is_connected: bool,               // 接続状態
+
+    // 描画関連
+    canvas: HtmlCanvasElement,        // キャンバス要素
+    context: CanvasRenderingContext2d,// 描画コンテキスト
+    
+    // マウス操作関連
+    mouse_x: f64,                     // マウスX座標
+    mouse_y: f64,                     // マウスY座標
+    is_mouse_down: bool,              // マウスボタン押下状態
+    last_position_update: f64,        // 最後に位置情報を送信した時間
+    
+    // 画面状態
+    current_screen: Screen,           // 現在の画面
     
     // マインスイーパー特有の状態
-    board_width: usize,
-    board_height: usize,
-    mine_count: usize,
-    cell_size: f64,
-    cells: Vec<CellValue>,
-    revealed: Vec<bool>,
-    flagged: Vec<bool>,
-    game_started: bool,
-    game_over: bool,
-    win: bool,
+    board_width: usize,               // ボードの幅
+    board_height: usize,              // ボードの高さ
+    mine_count: usize,                // 地雷の数
+    cell_size: f64,                   // セルのサイズ
+    cells: Vec<CellValue>,            // セルの値
+    revealed: Vec<bool>,              // セルが開かれたかどうか
+    flagged: Vec<bool>,               // フラグが立てられたかどうか
+    game_started: bool,               // ゲームが開始されたかどうか
+    game_over: bool,                  // ゲームオーバーかどうか
+    win: bool,                        // 勝利したかどうか
 }
 
 impl GameState {
+    /**
+     * GameStateの新しいインスタンスを作成する
+     * 
+     * @param canvas キャンバス要素
+     * @return GameStateインスタンス
+     */
     fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
         // キャンバスから2Dコンテキストを取得
         let context = canvas
@@ -119,7 +159,17 @@ impl GameState {
         })
     }
 
-    // WebSocketに接続
+    /**
+     * WebSocketサーバーに接続する
+     * 
+     * サーバーとの通信を確立し、各種イベントハンドラを設定します。
+     * - onopen: 接続成功時の処理
+     * - onmessage: メッセージ受信時の処理
+     * - onerror: エラー発生時の処理
+     * - onclose: 接続終了時の処理
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn connect_websocket(&mut self) -> Result<(), JsValue> {
         // オブジェクトを所有させてWebSocketに保存
         let server_url = get_websocket_url();
@@ -360,7 +410,12 @@ impl GameState {
         Ok(())
     }
 
-    // メッセージを送信
+    /**
+     * WebSocketサーバーにメッセージを送信する
+     * 
+     * @param message 送信するメッセージ文字列
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn send_message(&self, message: &str) -> Result<(), JsValue> {
         if let Some(ws) = &self.websocket {
             ws.send_with_str(message)?;
@@ -368,7 +423,13 @@ impl GameState {
         Ok(())
     }
 
-    // 位置更新メッセージを送信
+    /**
+     * プレイヤーの位置情報を更新してサーバーに送信する
+     * 
+     * 位置更新は100ms間隔で制限されています。
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn send_position_update(&mut self) -> Result<(), JsValue> {
         if let Some(player_id) = &self.local_player_id {
             if let Some(player) = self.players.get(player_id) {
@@ -390,7 +451,12 @@ impl GameState {
         Ok(())
     }
 
-    // セルを開く
+    /**
+     * 指定したセルを開くリクエストをサーバーに送信する
+     * 
+     * @param index 開くセルのインデックス
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn reveal_cell(&mut self, index: usize) -> Result<(), JsValue> {
         // 既に開かれている、フラグが立てられている、またはゲームオーバーの場合は何もしない
         if self.revealed[index] || self.flagged[index] || self.game_over {
@@ -406,7 +472,12 @@ impl GameState {
         self.send_message(&message.to_string())
     }
 
-    // フラグを切り替え
+    /**
+     * 指定したセルのフラグを切り替えるリクエストをサーバーに送信する
+     * 
+     * @param index フラグを切り替えるセルのインデックス
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn toggle_flag(&mut self, index: usize) -> Result<(), JsValue> {
         // 既に開かれている、またはゲームオーバーの場合は何もしない
         if self.revealed[index] || self.game_over {
@@ -422,7 +493,11 @@ impl GameState {
         self.send_message(&message.to_string())
     }
 
-    // ゲームをリセット
+    /**
+     * ゲームをリセットするリクエストをサーバーに送信する
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn reset_game(&mut self) -> Result<(), JsValue> {
         // サーバーにゲームをリセットするメッセージを送信
         let message = serde_json::json!({
@@ -432,7 +507,15 @@ impl GameState {
         self.send_message(&message.to_string())
     }
 
-    // プレイヤーを追加（初期化時）
+    /**
+     * プレイヤーを追加する（初期化時に使用）
+     * 
+     * ローカルプレイヤーとサーバーから取得した他のプレイヤーの情報を
+     * ゲーム状態に追加します。
+     * 
+     * @param local_id ローカルプレイヤーのID
+     * @param players_json 他のプレイヤーの情報を含むJSON
+     */
     fn add_player(&mut self, local_id: String, players_json: serde_json::Value) {
         // ローカルプレイヤーIDを設定
         self.local_player_id = Some(local_id.clone());
@@ -465,7 +548,14 @@ impl GameState {
         update_player_count(self.players.len());
     }
 
-    // リモートプレイヤーを追加
+    /**
+     * リモートプレイヤーを追加する
+     * 
+     * @param id プレイヤーID
+     * @param x X座標
+     * @param y Y座標
+     * @param color プレイヤーの色
+     */
     fn add_remote_player(&mut self, id: &str, x: f64, y: f64, color: String) {
         let player = Player {
             id: id.to_string(),
@@ -480,7 +570,11 @@ impl GameState {
         update_player_count(self.players.len());
     }
 
-    // プレイヤーを削除
+    /**
+     * プレイヤーを削除する
+     * 
+     * @param id 削除するプレイヤーのID
+     */
     fn remove_player(&mut self, id: &str) {
         self.players.remove(id);
         
@@ -488,7 +582,13 @@ impl GameState {
         update_player_count(self.players.len());
     }
 
-    // プレイヤーの位置を更新
+    /**
+     * プレイヤーの位置を更新する
+     * 
+     * @param id 更新するプレイヤーのID
+     * @param x 新しいX座標
+     * @param y 新しいY座標
+     */
     fn update_player_position(&mut self, id: &str, x: f64, y: f64) {
         if let Some(player) = self.players.get_mut(id) {
             player.x = x;
@@ -496,7 +596,13 @@ impl GameState {
         }
     }
 
-    // ゲーム状態を更新
+    /**
+     * ゲーム状態を更新する
+     * 
+     * サーバーから受信したデータを元にゲーム状態を更新します。
+     * 
+     * @param game_data サーバーから受信したゲーム状態データ
+     */
     fn update_game_state(&mut self, game_data: &serde_json::Map<String, serde_json::Value>) {
         if let Some(width) = game_data.get("boardWidth").and_then(|v| v.as_i64()) {
             self.board_width = width as usize;
@@ -571,7 +677,11 @@ impl GameState {
         self.update_game_status();
     }
 
-    // ゲーム状態の表示を更新
+    /**
+     * ゲーム状態の表示を更新する
+     * 
+     * 現在のゲーム状態に基づいてUIに表示するステータスを更新します。
+     */
     fn update_game_status(&self) {
         let status = if self.game_over {
             if self.win {
@@ -588,7 +698,16 @@ impl GameState {
         update_game_status(status);
     }
 
-    // マウス座標からセルのインデックスを取得
+    /**
+     * マウス座標からセルのインデックスを取得する
+     * 
+     * 画面上のマウス座標から対応するセルのインデックスを計算します。
+     * 座標がボード外の場合はNoneを返します。
+     * 
+     * @param x マウスのX座標
+     * @param y マウスのY座標
+     * @return セルのインデックス（Option<usize>）
+     */
     fn get_cell_index(&self, x: f64, y: f64) -> Option<usize> {
         // ボードの左上の座標
         let board_left = (self.canvas.width() as f64 - self.cell_size * self.board_width as f64) / 2.0;
@@ -608,7 +727,13 @@ impl GameState {
         Some(cell_y * self.board_width + cell_x)
     }
 
-    // ボードを描画
+    /**
+     * ボードを描画する
+     * 
+     * マインスイーパーのボードとセルを描画します。
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn draw_board(&self) -> Result<(), JsValue> {
         let ctx = &self.context;
         let canvas_width = self.canvas.width() as f64;
@@ -724,7 +849,13 @@ impl GameState {
         Ok(())
     }
 
-    // プレイヤーのカーソルを描画
+    /**
+     * プレイヤーのカーソルを描画する
+     * 
+     * 全プレイヤーのカーソルと名前を描画します。
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn draw_players(&self) -> Result<(), JsValue> {
         let ctx = &self.context;
         
@@ -756,7 +887,13 @@ impl GameState {
         Ok(())
     }
 
-    // UIを描画
+    /**
+     * UIを描画する
+     * 
+     * リセットボタンなどのUI要素を描画します。
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn draw_ui(&self) -> Result<(), JsValue> {
         let ctx = &self.context;
         let canvas_width = self.canvas.width() as f64;
@@ -788,7 +925,13 @@ impl GameState {
         Ok(())
     }
 
-    // ゲームの更新
+    /**
+     * ゲームの状態を更新する
+     * 
+     * プレイヤーの位置などを更新し、画面を再描画します。
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn update(&mut self) -> Result<(), JsValue> {
         // ローカルプレイヤーの移動
         if let Some(player_id) = &self.local_player_id {
@@ -808,7 +951,13 @@ impl GameState {
         Ok(())
     }
 
-    // 描画
+    /**
+     * ゲームを描画する
+     * 
+     * 現在の画面状態に応じて、タイトル画面かゲーム画面を描画します。
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn draw(&mut self) -> Result<(), JsValue> {
         match self.current_screen {
             Screen::Title => {
@@ -832,7 +981,18 @@ impl GameState {
         Ok(())
     }
 
-    // マウスクリック処理
+    /**
+     * マウスクリック処理を行う
+     * 
+     * 画面状態に応じて適切なクリック処理を実行します：
+     * - タイトル画面：スタートボタンの処理
+     * - ゲーム画面：セルのクリックやフラグ処理
+     * 
+     * @param x クリック位置のX座標
+     * @param y クリック位置のY座標
+     * @param right_click 右クリックかどうか
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn handle_mouse_click(&mut self, x: f64, y: f64, right_click: bool) -> Result<(), JsValue> {
         match self.current_screen {
             Screen::Title => {
@@ -884,7 +1044,13 @@ impl GameState {
         Ok(())
     }
 
-    // 接続状態を描画
+    /**
+     * 接続状態を描画する
+     * 
+     * 現在のWebSocket接続状態をUI上に表示します。
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn draw_connection_status(&self) -> Result<(), JsValue> {
         let ctx = &self.context;
         let canvas_width = self.canvas.width() as f64;
@@ -912,7 +1078,13 @@ impl GameState {
         Ok(())
     }
 
-    // タイトル画面を描画
+    /**
+     * タイトル画面を描画する
+     * 
+     * ゲームのタイトルとスタートボタンを描画します。
+     * 
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
     fn draw_title_screen(&self) -> Result<(), JsValue> {
         let ctx = &self.context;
         let canvas_width = self.canvas.width() as f64;
@@ -964,7 +1136,15 @@ impl GameState {
     }
 }
 
-// ------ WASMエントリーポイント ------ //
+/**
+ * ゲームのエントリーポイント
+ * 
+ * Webページから呼び出されるWASMのエントリーポイントです。
+ * ゲームの初期化、イベントリスナーの設定、アニメーションループの開始を行います。
+ * 
+ * @param canvas_element ゲームを描画するキャンバス要素
+ * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+ */
 #[wasm_bindgen]
 pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
     // パニック時にログ出力するようにする
@@ -1043,7 +1223,14 @@ pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
     Ok(())
 }
 
-// アニメーションフレームのリクエスト
+/**
+ * アニメーションフレームをリクエストする
+ * 
+ * ブラウザの次の描画タイミングでコールバックを実行するようにリクエストします。
+ * ゲームのアニメーションループを実現するために使用されます。
+ * 
+ * @param f 次のフレームで実行するクロージャ
+ */
 fn request_animation_frame(f: &Closure<dyn FnMut()>) {
     web_sys::window()
         .unwrap()

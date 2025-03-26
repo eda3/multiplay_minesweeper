@@ -204,6 +204,15 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 /**
+ *
+ * * ゲームのエントリーポイント
+ * *
+ * * Webページから呼び出されるWASMのエントリーポイントです。
+ * * ゲームの初期化、イベントリスナーの設定、アニメーションループの開始を行います。
+ * *
+ * * @param canvas_element ゲームを描画するキャンバス要素
+ * * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+ *
  * @param {HTMLCanvasElement} canvas_element
  */
 export function start_game(canvas_element) {
