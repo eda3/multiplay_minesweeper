@@ -34,6 +34,13 @@ enum CellValue {
     Empty(u8),      // 空白（周囲の地雷数）
 }
 
+// 画面状態
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Title,  // タイトル画面
+    Game,   // ゲーム画面
+}
+
 // ------ プレイヤー構造体 ------ //
 #[derive(Clone, Serialize, Deserialize)]
 struct Player {
@@ -54,6 +61,7 @@ struct GameState {
     mouse_y: f64,
     is_mouse_down: bool,
     last_position_update: f64,
+    current_screen: Screen,  // 現在の画面状態
     
     // マインスイーパー特有の状態
     board_width: usize,
@@ -94,6 +102,7 @@ impl GameState {
             mouse_y: 0.0,
             is_mouse_down: false,
             last_position_update: 0.0,
+            current_screen: Screen::Title,  // 初期画面はタイトル画面
             
             board_width,
             board_height,
@@ -792,41 +801,121 @@ impl GameState {
 
     // 描画
     fn draw(&mut self) -> Result<(), JsValue> {
-        // ボードを描画
-        self.draw_board()?;
-        
-        // プレイヤーを描画
-        self.draw_players()?;
-        
-        // UIを描画
-        self.draw_ui()?;
+        match self.current_screen {
+            Screen::Title => {
+                self.draw_title_screen()?;
+            },
+            Screen::Game => {
+                // ボードを描画
+                self.draw_board()?;
+                
+                // プレイヤーを描画
+                self.draw_players()?;
+                
+                // UIを描画
+                self.draw_ui()?;
+            }
+        }
         
         Ok(())
     }
 
     // マウスクリック処理
     fn handle_mouse_click(&mut self, x: f64, y: f64, right_click: bool) -> Result<(), JsValue> {
-        // リセットボタンがクリックされたかチェック
-        let canvas_width = self.canvas.width() as f64;
-        let reset_x = canvas_width - 80.0;
-        let reset_y = 30.0;
-        let dx = x - reset_x;
-        let dy = y - reset_y;
-        if dx * dx / (40.0 * 40.0) + dy * dy / (20.0 * 20.0) <= 1.0 {
-            // リセットボタンがクリックされた
-            return self.reset_game();
-        }
-        
-        // クリックされたセルを取得
-        if let Some(index) = self.get_cell_index(x, y) {
-            if right_click {
-                // 右クリック: フラグを切り替え
-                self.toggle_flag(index)?;
-            } else {
-                // 左クリック: セルを開く
-                self.reveal_cell(index)?;
+        match self.current_screen {
+            Screen::Title => {
+                // スタートボタンの位置を計算
+                let canvas_width = self.canvas.width() as f64;
+                let canvas_height = self.canvas.height() as f64;
+                let button_x = canvas_width / 2.0;
+                let button_y = canvas_height / 2.0 + 50.0;
+                let button_width = 200.0;
+                let button_height = 60.0;
+                
+                // スタートボタンがクリックされたかチェック
+                if x >= button_x - button_width / 2.0 &&
+                   x <= button_x + button_width / 2.0 &&
+                   y >= button_y - button_height / 2.0 &&
+                   y <= button_y + button_height / 2.0 {
+                    // ゲーム画面に遷移
+                    self.current_screen = Screen::Game;
+                    
+                    // WebSocketに接続
+                    self.connect_websocket()?;
+                }
+            },
+            Screen::Game => {
+                // リセットボタンがクリックされたかチェック
+                let canvas_width = self.canvas.width() as f64;
+                let reset_x = canvas_width - 80.0;
+                let reset_y = 30.0;
+                let dx = x - reset_x;
+                let dy = y - reset_y;
+                if dx * dx / (40.0 * 40.0) + dy * dy / (20.0 * 20.0) <= 1.0 {
+                    // リセットボタンがクリックされた
+                    return self.reset_game();
+                }
+                
+                // クリックされたセルを取得
+                if let Some(index) = self.get_cell_index(x, y) {
+                    if right_click {
+                        // 右クリック: フラグを切り替え
+                        self.toggle_flag(index)?;
+                    } else {
+                        // 左クリック: セルを開く
+                        self.reveal_cell(index)?;
+                    }
+                }
             }
         }
+        
+        Ok(())
+    }
+
+    // タイトル画面を描画
+    fn draw_title_screen(&self) -> Result<(), JsValue> {
+        let ctx = &self.context;
+        let canvas_width = self.canvas.width() as f64;
+        let canvas_height = self.canvas.height() as f64;
+        
+        // 背景を描画
+        ctx.set_fill_style(&JsValue::from_str("#333333"));
+        ctx.fill_rect(0.0, 0.0, canvas_width, canvas_height);
+        
+        // タイトルを描画
+        ctx.set_fill_style(&JsValue::from_str("#FFFFFF"));
+        ctx.set_font("bold 48px Arial");
+        ctx.set_text_align("center");
+        ctx.set_text_baseline("middle");
+        ctx.fill_text(
+            "マルチプレイヤー\nマインスイーパー",
+            canvas_width / 2.0,
+            canvas_height / 2.0 - 50.0,
+        )?;
+        
+        // スタートボタンを描画
+        let button_x = canvas_width / 2.0;
+        let button_y = canvas_height / 2.0 + 50.0;
+        let button_width = 200.0;
+        let button_height = 60.0;
+        
+        // ボタンの背景
+        ctx.set_fill_style(&JsValue::from_str("#4CAF50"));
+        ctx.fill_rect(
+            button_x - button_width / 2.0,
+            button_y - button_height / 2.0,
+            button_width,
+            button_height,
+        );
+        
+        // ボタンのテキスト
+        ctx.set_fill_style(&JsValue::from_str("#FFFFFF"));
+        ctx.set_font("bold 24px Arial");
+        ctx.fill_text(
+            "スタート",
+            button_x,
+            button_y,
+        )?;
         
         Ok(())
     }
@@ -840,9 +929,6 @@ pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
     
     // ゲーム状態の初期化
     let game_state = Rc::new(RefCell::new(GameState::new(canvas_element.clone())?));
-    
-    // WebSocketに接続
-    game_state.borrow_mut().connect_websocket()?;
     
     // マウスイベントのセットアップ
     let game_state_clone = game_state.clone();
