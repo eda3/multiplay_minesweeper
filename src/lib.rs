@@ -27,10 +27,12 @@ mod board;
 mod components; // ECSコンポーネント
 mod resources;  // ECSリソース
 mod entities;   // ECSエンティティ
+mod systems;    // ECSシステム
 
 // サブモジュールからの要素をインポート
 use js_bindings::{log, request_animation_frame};
 use game_state::GameState;
+use systems::SystemRegistry;
 
 /**
  * ゲームのエントリーポイント
