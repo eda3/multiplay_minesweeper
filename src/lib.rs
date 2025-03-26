@@ -24,6 +24,7 @@ mod utils;
 mod rendering;
 mod network;
 mod board;
+mod components;
 
 // サブモジュールからの要素をインポート
 use js_bindings::{log, request_animation_frame};
