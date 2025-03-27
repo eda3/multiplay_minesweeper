@@ -4,11 +4,14 @@
  * ECSアーキテクチャの中心となるWorldクラス
  * エンティティとリソースの管理を一元化
  */
-use crate::entities::EntityManager;
+use crate::entities::{EntityManager, EntityId};
 use crate::resources::ResourceManager;
 use crate::system::{SystemRegistry, System};
 use crate::resources::{ResourceBatch, ResourceBatchMut};
 use std::any::Any;
+use std::any::TypeId;
+use crate::components::Component;
+use crate::resources::Resource;
 
 /// World構造体 - ECSの中心的なコンテナ
 #[derive(Debug)]
@@ -48,27 +51,27 @@ impl World {
     }
     
     /// リソースを取得（不変）
-    pub fn get_resource<T: 'static>(&self) -> Option<&T> {
+    pub fn get_resource<T: Resource>(&self) -> Option<&T> {
         self.resource_manager.get::<T>()
     }
     
     /// リソースを取得（可変）
-    pub fn get_resource_mut<T: 'static>(&mut self) -> Option<&mut T> {
+    pub fn get_resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
         self.resource_manager.get_mut::<T>()
     }
     
     /// リソースを追加または更新
-    pub fn insert_resource<T: 'static>(&mut self, resource: T) {
+    pub fn insert_resource<T: Resource>(&mut self, resource: T) {
         self.resource_manager.insert(resource);
     }
     
     /// リソースが存在するかチェック
-    pub fn has_resource<T: 'static>(&self) -> bool {
+    pub fn has_resource<T: Resource>(&self) -> bool {
         self.resource_manager.contains::<T>()
     }
     
     /// リソースを削除
-    pub fn remove_resource<T: 'static>(&mut self) -> Option<T> {
+    pub fn remove_resource<T: Resource>(&mut self) -> Option<T> {
         self.resource_manager.remove::<T>()
     }
     
@@ -101,7 +104,7 @@ impl World {
     /// リソースバッチ処理（読み取り専用）
     pub fn with_resources<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&ResourceBatch) -> R,
+        F: FnOnce(&ResourceBatch<dyn Resource>) -> R,
     {
         self.resource_manager.batch(|batch| f(&batch))
     }
@@ -109,7 +112,7 @@ impl World {
     /// リソースバッチ処理（読み書き）
     pub fn with_resources_mut<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(&mut ResourceBatchMut) -> R,
+        F: FnOnce(&mut ResourceBatchMut<dyn Resource>) -> R,
     {
         self.resource_manager.batch_mut(|mut batch| f(&mut batch))
     }
@@ -120,7 +123,9 @@ impl World {
             CoreGameResource, 
             TimeResource, 
             PlayerStateResource, 
-            GameConfigResource
+            GameConfigResource,
+            BoardConfigResource,
+            BoardStateResource
         };
         
         // コアゲームリソース
@@ -141,6 +146,16 @@ impl World {
         // ゲーム設定リソース
         if !self.has_resource::<GameConfigResource>() {
             self.insert_resource(GameConfigResource::new());
+        }
+        
+        // ボード設定リソース
+        if !self.has_resource::<BoardConfigResource>() {
+            self.insert_resource(BoardConfigResource::default());
+        }
+        
+        // ボード状態リソース
+        if !self.has_resource::<BoardStateResource>() {
+            self.insert_resource(BoardStateResource::new());
         }
     }
     
@@ -183,5 +198,50 @@ impl World {
         // システムレジストリの既存APIを通じてシステムを取得し、
         // それをAnyとして返す（これはテスト用なので簡易的な実装です）
         None  // テスト用なので一旦Noneを返す
+    }
+    
+    pub fn create_entity(&mut self) -> EntityId {
+        self.entity_manager.create_entity()
+    }
+    
+    pub fn add_component<T: Component>(&mut self, entity: EntityId, component: T) {
+        // TODO: エラーハンドリングの改善
+        let _ = self.entity_manager.add_component(entity, component);
+    }
+    
+    pub fn get_component<T: Component>(&self, entity: EntityId) -> Option<&T> {
+        // TODO: EntityManagerにget_componentメソッドを実装
+        None
+    }
+    
+    pub fn get_component_mut<T: Component>(&mut self, entity: EntityId) -> Option<&mut T> {
+        // TODO: EntityManagerにget_component_mutメソッドを実装
+        None
+    }
+    
+    pub fn remove_component<T: Component>(&mut self, entity: EntityId) -> Option<T> {
+        // TODO: EntityManagerにremove_componentメソッドを実装
+        None
+    }
+    
+    pub fn has_component<T: Component>(&self, entity: EntityId) -> bool {
+        // TODO: EntityManagerにhas_componentメソッドを実装
+        false
+    }
+    
+    pub fn get_entity_manager(&self) -> &EntityManager {
+        &self.entity_manager
+    }
+    
+    pub fn get_entity_manager_mut(&mut self) -> &mut EntityManager {
+        &mut self.entity_manager
+    }
+    
+    pub fn get_resource_manager(&self) -> &ResourceManager {
+        &self.resource_manager
+    }
+    
+    pub fn get_resource_manager_mut(&mut self) -> &mut ResourceManager {
+        &mut self.resource_manager
     }
 } 

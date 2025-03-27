@@ -36,6 +36,7 @@ serde_json = "1"
 wasm-bindgen-futures = "0.4"
 getrandom = { version = "0.2", features = ["js"] }
 console_error_panic_hook = "0.1.7"
+rand = { version = "0.8", features = ["getrandom"] }
 
 [profile.release]
 opt-level = "s"

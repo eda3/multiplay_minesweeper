@@ -1,7 +1,8 @@
 /**
  * リソースマネージャー
  * 
- * 型安全なリソース管理を提供するコンテナ
+ * ECSパターンでグローバルに共有されるリソースを管理します。
+ * 型ごとに一意のリソースインスタンスを保持します。
  */
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -9,12 +10,14 @@ use std::fmt::Debug;
 use std::cell::{RefCell, Ref, RefMut};
 use std::marker::PhantomData;
 
+use super::resource_trait::Resource;
+
 /// リソースマネージャー
 /// 型安全にさまざまなリソースを保持・管理する
 #[derive(Default)]
 pub struct ResourceManager {
     /// リソースを型IDで管理するマップ
-    resources: HashMap<TypeId, Box<dyn Any>>,
+    resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl Debug for ResourceManager {
@@ -34,37 +37,40 @@ impl ResourceManager {
         }
     }
     
-    /// リソースを追加または置換
-    pub fn insert<T: 'static>(&mut self, resource: T) {
-        let type_id = TypeId::of::<T>();
+    /// リソースを追加または更新
+    pub fn insert<R: Resource>(&mut self, resource: R) {
+        let type_id = TypeId::of::<R>();
         self.resources.insert(type_id, Box::new(resource));
     }
     
-    /// リソースの参照を取得
-    pub fn get<T: 'static>(&self) -> Option<&T> {
-        let type_id = TypeId::of::<T>();
-        self.resources.get(&type_id)
-            .and_then(|boxed| boxed.downcast_ref::<T>())
+    /// リソースへの不変参照を取得
+    pub fn get<R: Resource>(&self) -> Option<&R> {
+        let type_id = TypeId::of::<R>();
+        self.resources
+            .get(&type_id)
+            .and_then(|boxed| boxed.downcast_ref::<R>())
     }
     
-    /// リソースの可変参照を取得
-    pub fn get_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        let type_id = TypeId::of::<T>();
-        self.resources.get_mut(&type_id)
-            .and_then(|boxed| boxed.downcast_mut::<T>())
+    /// リソースへの可変参照を取得
+    pub fn get_mut<R: Resource>(&mut self) -> Option<&mut R> {
+        let type_id = TypeId::of::<R>();
+        self.resources
+            .get_mut(&type_id)
+            .and_then(|boxed| boxed.downcast_mut::<R>())
     }
     
-    /// 指定した型のリソースが存在するかどうか
-    pub fn contains<T: 'static>(&self) -> bool {
-        let type_id = TypeId::of::<T>();
+    /// リソースが存在するかチェック
+    pub fn contains<R: Resource>(&self) -> bool {
+        let type_id = TypeId::of::<R>();
         self.resources.contains_key(&type_id)
     }
     
-    /// リソースを削除して返す
-    pub fn remove<T: 'static>(&mut self) -> Option<T> {
-        let type_id = TypeId::of::<T>();
-        self.resources.remove(&type_id)
-            .and_then(|boxed| boxed.downcast().ok())
+    /// リソースを削除し、削除したリソースを返す
+    pub fn remove<R: Resource>(&mut self) -> Option<R> {
+        let type_id = TypeId::of::<R>();
+        self.resources
+            .remove(&type_id)
+            .and_then(|boxed| boxed.downcast::<R>().ok())
             .map(|boxed| *boxed)
     }
     
@@ -109,7 +115,7 @@ impl ResourceManager {
     /// 複数のリソースを読み取りモードでバッチ処理
     pub fn batch<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(ResourceBatch) -> R,
+        F: FnOnce(ResourceBatch<dyn Resource>) -> R,
     {
         let batch = ResourceBatch { manager: self };
         f(batch)
@@ -118,49 +124,50 @@ impl ResourceManager {
     /// 複数のリソースを書き込みモードでバッチ処理
     pub fn batch_mut<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(ResourceBatchMut) -> R,
+        F: FnOnce(ResourceBatchMut<dyn Resource>) -> R,
     {
         let batch = ResourceBatchMut { manager: self };
         f(batch)
     }
-}
-
-/// 複数のリソースへの読み取りアクセスを提供するヘルパー
-pub struct ResourceBatch<'a> {
-    manager: &'a ResourceManager,
-}
-
-impl<'a> ResourceBatch<'a> {
-    /// リソースへの参照を取得
-    pub fn read<T: 'static>(&self) -> Option<&'a T> {
-        self.manager.get::<T>()
-    }
-}
-
-/// 複数のリソースへの書き込みアクセスを提供するヘルパー
-pub struct ResourceBatchMut<'a> {
-    manager: &'a mut ResourceManager,
-}
-
-impl<'a> ResourceBatchMut<'a> {
-    /// リソースへの参照を取得
-    pub fn read<T: 'static>(&self) -> Option<&'a T> {
-        // 安全でない実装だが、ResourceManagerの内部でTypeIdを使った
-        // 安全な借用を実現している。可変参照からの不変参照取得。
-        unsafe {
-            let manager_ref = &*(self.manager as *const ResourceManager);
-            manager_ref.get::<T>()
+    
+    /// 読み取り専用リソースバッチの取得
+    pub fn fetch<R: Resource>(&self) -> ResourceBatch<R> {
+        ResourceBatch {
+            resource: self.get::<R>().expect("指定されたリソースが見つかりません"),
         }
     }
     
-    /// リソースへの可変参照を取得
-    pub fn write<T: 'static>(&mut self) -> Option<&'a mut T> {
-        // 安全でない実装だが、ResourceManagerの内部でTypeIdを使った
-        // 安全な借用を実現している。get_mutの戻り値のライフタイムを変換。
-        unsafe {
-            let ptr = self.manager.get_mut::<T>()? as *mut T;
-            Some(&mut *ptr)
+    /// 書き込み可能リソースバッチの取得
+    pub fn fetch_mut<R: Resource>(&mut self) -> ResourceBatchMut<R> {
+        ResourceBatchMut {
+            resource: self.get_mut::<R>().expect("指定されたリソースが見つかりません"),
         }
+    }
+}
+
+/// 読み取り専用リソースへのアクセスを提供する構造体
+pub struct ResourceBatch<'a, R: Resource> {
+    resource: &'a R,
+}
+
+impl<'a, R: Resource> ResourceBatch<'a, R> {
+    pub fn resource(&self) -> &R {
+        self.resource
+    }
+}
+
+/// 可変リソースへのアクセスを提供する構造体
+pub struct ResourceBatchMut<'a, R: Resource> {
+    resource: &'a mut R,
+}
+
+impl<'a, R: Resource> ResourceBatchMut<'a, R> {
+    pub fn resource(&self) -> &R {
+        self.resource
+    }
+
+    pub fn resource_mut(&mut self) -> &mut R {
+        self.resource
     }
 }
 

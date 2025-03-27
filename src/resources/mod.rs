@@ -15,6 +15,8 @@ mod time;
 mod game_config;
 mod player_state;
 mod resource_manager;
+mod board_resources;
+mod resource_trait;
 
 // 既存のリソースを再エクスポート（名前衝突を避けるためにリネーム）
 pub use board_config::BoardConfig as OldBoardConfig;
@@ -27,4 +29,6 @@ pub use core_game::{CoreGameResource, GamePhase};
 pub use time::TimeResource;
 pub use game_config::{GameConfigResource, BoardConfig, Difficulty};
 pub use player_state::{PlayerStateResource, Player as EcsPlayer, MouseState};
-pub use resource_manager::{ResourceManager, ResourceBatch, ResourceBatchMut}; 
+pub use resource_manager::{ResourceManager, ResourceBatch, ResourceBatchMut};
+pub use board_resources::{BoardConfigResource, BoardStateResource};
+pub use resource_trait::Resource; 

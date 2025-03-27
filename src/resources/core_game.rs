@@ -5,6 +5,7 @@
  */
 use wasm_bindgen::prelude::*;
 use js_sys::Date;
+use super::resource_trait::Resource;
 
 /// ゲームの状態を表す列挙型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,15 +27,16 @@ pub enum GamePhase {
 #[derive(Debug, Clone)]
 pub struct CoreGameResource {
     /// 現在のゲームフェーズ
-    phase: GamePhase,
+    pub phase: GamePhase,
     /// ゲーム開始時刻
-    start_time: Option<f64>,
+    pub start_time: Option<f64>,
     /// 経過時間（ミリ秒）
-    elapsed_time: f64,
+    pub elapsed_time: f64,
     /// ゲームのスコア
-    score: u32,
+    pub score: u32,
     /// 残りの地雷数
-    remaining_mines: u32,
+    pub remaining_mines: u32,
+    pub is_multiplayer: bool,
 }
 
 impl Default for CoreGameResource {
@@ -52,6 +54,7 @@ impl CoreGameResource {
             elapsed_time: 0.0,
             score: 0,
             remaining_mines: 0,
+            is_multiplayer: false,
         }
     }
 
@@ -172,7 +175,22 @@ impl CoreGameResource {
         let seconds = total_seconds % 60;
         format!("{:02}:{:02}", minutes, seconds)
     }
+
+    pub fn set_phase(&mut self, phase: GamePhase) {
+        self.phase = phase;
+    }
+
+    pub fn is_game_active(&self) -> bool {
+        matches!(self.phase, GamePhase::Playing)
+    }
+
+    pub fn is_game_over(&self) -> bool {
+        matches!(self.phase, GamePhase::GameOver { .. })
+    }
 }
+
+// Resourceトレイトの実装
+impl Resource for CoreGameResource {}
 
 #[cfg(test)]
 mod tests {

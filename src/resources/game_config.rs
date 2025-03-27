@@ -5,9 +5,10 @@
  */
 use wasm_bindgen::prelude::*;
 use js_sys::Date;
+use super::resource_trait::Resource;
 
 /// ゲームの難易度
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Difficulty {
     /// 初級（9x9、10地雷）
     Easy,
@@ -64,6 +65,16 @@ impl BoardConfig {
     pub fn update_cell_size(&mut self, cell_size: f64) {
         self.cell_size = cell_size;
     }
+
+    /// 標準サイズの簡易コンストラクタ
+    pub fn from_difficulty(difficulty: Difficulty) -> Self {
+        match difficulty {
+            Difficulty::Easy => Self::new(9, 9, 10, 30.0),
+            Difficulty::Medium => Self::new(16, 16, 40, 30.0),
+            Difficulty::Hard => Self::new(30, 16, 99, 30.0),
+            Difficulty::Custom => Self::new(9, 9, 10, 30.0), // カスタム時のデフォルト値
+        }
+    }
 }
 
 /// ゲーム設定リソース
@@ -86,53 +97,44 @@ pub struct GameConfigResource {
     pub multiplayer: bool,
     /// 難易度設定
     pub difficulty: Difficulty,
+    pub sound_enabled: bool,
+    pub animations_enabled: bool,
+    pub dark_mode: bool,
 }
 
 impl GameConfigResource {
     /// 新しいGameConfigResourceインスタンスを作成
     pub fn new() -> Self {
+        let difficulty = Difficulty::Easy;
+        let board_config = BoardConfig::from_difficulty(difficulty);
+        
         Self {
-            board_config: BoardConfig::new(9, 9, 10, 30.0), // デフォルトは初級
+            difficulty,
+            board_config,
             auto_flag: false,
             first_click_safe: true,
             win_by_revealing: true,
             use_timer: true,
             max_score: 10000,
             multiplayer: true,
-            difficulty: Difficulty::Easy,
+            sound_enabled: true,
+            animations_enabled: true,
+            dark_mode: false,
         }
     }
 
     /// 難易度を設定
     pub fn set_difficulty(&mut self, difficulty: Difficulty) {
-        let (width, height, mine_count) = match difficulty {
-            Difficulty::Easy => (9, 9, 10),
-            Difficulty::Medium => (16, 16, 40),
-            Difficulty::Hard => (30, 16, 99),
-            Difficulty::Custom => (
-                self.board_config.width,
-                self.board_config.height,
-                self.board_config.mine_count
-            ),
-        };
-        
-        self.board_config = BoardConfig::new(
-            width,
-            height,
-            mine_count,
-            self.board_config.cell_size,
-        );
         self.difficulty = difficulty;
+        if difficulty != Difficulty::Custom {
+            self.board_config = BoardConfig::from_difficulty(difficulty);
+        }
     }
 
     /// カスタムボードを設定
     pub fn set_custom_board(&mut self, width: usize, height: usize, mine_count: usize) {
-        self.board_config = BoardConfig::new(
-            width,
-            height,
-            mine_count,
-            self.board_config.cell_size,
-        );
+        self.difficulty = Difficulty::Custom;
+        self.board_config = BoardConfig::new(width, height, mine_count, self.board_config.cell_size);
     }
 
     /// キャンバスサイズに基づいてセルサイズを更新
@@ -198,6 +200,15 @@ impl GameConfigResource {
             self.board_config.mine_count as u64 * 13;
         
         base_score + time_bonus + additional as u32
+    }
+}
+
+// Resourceトレイトの実装
+impl Resource for GameConfigResource {}
+
+impl Default for GameConfigResource {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -6,6 +6,7 @@
 use wasm_bindgen::prelude::*;
 use js_sys::Date;
 use std::collections::VecDeque;
+use super::resource_trait::Resource;
 
 /// ゲーム内の時間管理を行うリソース
 #[derive(Debug)]
@@ -35,6 +36,7 @@ pub struct TimeResource {
 impl TimeResource {
     /// 新しいTimeResourceインスタンスを作成
     pub fn new() -> Self {
+        let now = Date::now();
         Self {
             delta_time: 0.0,
             total_time: 0.0,
@@ -43,7 +45,7 @@ impl TimeResource {
             frame_times: VecDeque::with_capacity(60),
             max_samples: 60,
             fps: 0.0,
-            current_time: Date::now(),
+            current_time: now,
             is_paused: false,
             time_scale: 1.0,
         }
@@ -141,6 +143,15 @@ impl TimeResource {
     /// 現在のFPSを文字列で取得
     pub fn format_fps(&self) -> String {
         format!("{:.1} FPS", self.fps)
+    }
+}
+
+// Resourceトレイトの実装
+impl Resource for TimeResource {}
+
+impl Default for TimeResource {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

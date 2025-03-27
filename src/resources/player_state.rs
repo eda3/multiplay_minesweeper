@@ -10,6 +10,8 @@ use js_sys::{Date, JSON, Object, Reflect};
 use serde::{Serialize, Deserialize};
 use wasm_bindgen::JsValue;
 use crate::models::Player as GamePlayer;
+use super::resource_trait::Resource;
+use web_sys::KeyboardEvent;
 
 /// マウスの状態
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +213,9 @@ impl PlayerStateResource {
         serde_json::Value::Object(players).to_string()
     }
 }
+
+// Resourceトレイトの実装
+impl Resource for PlayerStateResource {}
 
 #[cfg(test)]
 mod tests {

@@ -257,6 +257,129 @@ impl SystemRegistry {
             None
         }
     }
+    
+    /// スタートアップシステムとして基本的なシステムを登録
+    pub fn register_default_systems(&mut self) {
+        // 外部リソースをインポート
+        use crate::systems::board_systems::{
+            board_init_system,
+            cell_reveal_system,
+            flag_toggle_system,
+            win_condition_system
+        };
+        
+        // システムを実装するモジュール
+        mod system_impls {
+            use super::*;
+            use crate::resources::ResourceManager;
+            
+            // ボード初期化システム
+            pub struct BoardInitSystem;
+            
+            impl System for BoardInitSystem {
+                fn name(&self) -> &str {
+                    "BoardInit"
+                }
+                
+                fn phase(&self) -> SystemPhase {
+                    SystemPhase::Startup
+                }
+                
+                fn run(&mut self, resources: &mut ResourceManager) {
+                    // ボード初期化システムを実行
+                    if let Err(err) = board_init_system(
+                        &mut resources.entity_manager,
+                        &mut resources.resources,
+                        crate::systems::system_registry::DeltaTime(0.0)
+                    ) {
+                        web_sys::console::error_1(&err);
+                    }
+                }
+            }
+            
+            // セル公開システム
+            pub struct CellRevealSystem;
+            
+            impl System for CellRevealSystem {
+                fn name(&self) -> &str {
+                    "CellReveal"
+                }
+                
+                fn phase(&self) -> SystemPhase {
+                    SystemPhase::Update
+                }
+                
+                fn run(&mut self, resources: &mut ResourceManager) {
+                    // セル公開システムを実行
+                    if let Err(err) = cell_reveal_system(
+                        &mut resources.entity_manager,
+                        &mut resources.resources,
+                        crate::systems::system_registry::DeltaTime(0.0)
+                    ) {
+                        web_sys::console::error_1(&err);
+                    }
+                }
+            }
+            
+            // フラグトグルシステム
+            pub struct FlagToggleSystem;
+            
+            impl System for FlagToggleSystem {
+                fn name(&self) -> &str {
+                    "FlagToggle"
+                }
+                
+                fn phase(&self) -> SystemPhase {
+                    SystemPhase::Update
+                }
+                
+                fn run(&mut self, resources: &mut ResourceManager) {
+                    // フラグトグルシステムを実行
+                    if let Err(err) = flag_toggle_system(
+                        &mut resources.entity_manager,
+                        &mut resources.resources,
+                        crate::systems::system_registry::DeltaTime(0.0)
+                    ) {
+                        web_sys::console::error_1(&err);
+                    }
+                }
+            }
+            
+            // 勝利条件チェックシステム
+            pub struct WinConditionSystem;
+            
+            impl System for WinConditionSystem {
+                fn name(&self) -> &str {
+                    "WinCondition"
+                }
+                
+                fn phase(&self) -> SystemPhase {
+                    SystemPhase::Update
+                }
+                
+                fn priority(&self) -> SystemPriority {
+                    10 // 他の更新システムの後に実行
+                }
+                
+                fn run(&mut self, resources: &mut ResourceManager) {
+                    // 勝利条件チェックシステムを実行
+                    if let Err(err) = win_condition_system(
+                        &mut resources.entity_manager,
+                        &mut resources.resources,
+                        crate::systems::system_registry::DeltaTime(0.0)
+                    ) {
+                        web_sys::console::error_1(&err);
+                    }
+                }
+            }
+        }
+        
+        // システムを登録
+        self.add_system(Box::new(system_impls::BoardInitSystem));
+        self.add_system(Box::new(system_impls::CellRevealSystem));
+        self.add_system(Box::new(system_impls::FlagToggleSystem));
+        self.add_system(Box::new(system_impls::WinConditionSystem));
+    }
 }
 
 impl fmt::Debug for SystemRegistry {

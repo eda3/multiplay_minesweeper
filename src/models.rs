@@ -1,12 +1,14 @@
 use serde::{Serialize, Deserialize};
 
 /**
- * セルの状態を表す列挙型
+ * セルの値を表す列挙型
  */
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellValue {
-    Mine,           // 地雷
-    Empty(u8),      // 空白（周囲の地雷数）
+    /// 地雷
+    Mine,
+    /// 空のセル（周囲の地雷数）
+    Empty(u8),
 }
 
 /**
@@ -19,18 +21,14 @@ pub enum Screen {
 }
 
 /**
- * プレイヤー情報を表す構造体
+ * プレイヤーモデル
  */
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
-    pub id: String,      // プレイヤーID
-    pub name: String,    // プレイヤー名
-    pub x: f64,          // X座標
-    pub y: f64,          // Y座標
-    pub color: String,   // カーソルの色
-    pub score: u32,      // プレイヤースコア
-    pub is_local: bool,  // ローカルプレイヤーかどうか
-    pub is_host: bool,   // ホストプレイヤーかどうか
-    pub is_alive: bool,  // 生存中かどうか
-    pub cells_revealed: usize, // 開いたセル数
+    /// プレイヤーID
+    pub id: String,
+    /// プレイヤー名
+    pub name: String,
+    /// スコア
+    pub score: u32,
 } 

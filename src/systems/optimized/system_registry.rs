@@ -472,4 +472,19 @@ impl SystemRegistry {
         let info = self.debug_info();
         console::log_1(&JsValue::from_str(&info));
     }
+    
+    /// ボード関連のシステムを登録
+    pub fn register_board_systems(&mut self) {
+        use crate::systems::board_systems::{
+            board_init_system,
+            cell_reveal_system,
+            flag_toggle_system,
+            win_condition_system
+        };
+        
+        self.add_system("board_init", board_init_system, SystemPriority::PreUpdate);
+        self.add_system("cell_reveal", cell_reveal_system, SystemPriority::Update);
+        self.add_system("flag_toggle", flag_toggle_system, SystemPriority::Update);
+        self.add_system("win_condition", win_condition_system, SystemPriority::PostUpdate);
+    }
 } 

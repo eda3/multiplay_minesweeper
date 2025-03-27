@@ -498,4 +498,56 @@ impl EntityManager {
         // エンティティIDを追加
         entities.insert(entity_id);
     }
-} 
+    
+    /// エンティティから特定タイプのコンポーネントを取得
+    pub fn get_component<T: 'static>(&self, entity_id: EntityId) -> Option<&T> {
+        if let Some(entity) = self.entities.get(&entity_id) {
+            entity.get_component::<T>()
+        } else {
+            None
+        }
+    }
+    
+    /// エンティティから特定タイプのコンポーネントを可変参照で取得
+    pub fn get_component_mut<T: 'static>(&mut self, entity_id: EntityId) -> Option<&mut T> {
+        if let Some(entity) = self.entities.get_mut(&entity_id) {
+            entity.get_component_mut::<T>()
+        } else {
+            None
+        }
+    }
+    
+    /// エンティティが特定タイプのコンポーネントを持っているか確認
+    pub fn has_component<T: 'static>(&self, entity_id: EntityId) -> bool {
+        if let Some(entity) = self.entities.get(&entity_id) {
+            entity.has_component::<T>()
+        } else {
+            false
+        }
+    }
+    
+    /// エンティティから特定タイプのコンポーネントを削除
+    pub fn remove_component<T: 'static>(&mut self, entity_id: EntityId) -> Option<T> {
+        let result = if let Some(entity) = self.entities.get_mut(&entity_id) {
+            entity.remove_component::<T>()
+        } else {
+            None
+        };
+        
+        // コンポーネントインデックスを更新
+        if result.is_some() {
+            let type_id = TypeId::of::<T>();
+            if let Some(entities) = self.component_indices.get_mut(&type_id) {
+                entities.remove(&entity_id);
+            }
+        }
+        
+        result
+    }
+    
+    /// 特定のコンポーネントを持つエンティティをすべて検索
+    pub fn find_entities_with_component<T: 'static>(&self) -> Vec<EntityId> {
+        // get_entities_with_component メソッドを呼び出して結果を返す
+        self.get_entities_with_component::<T>()
+    }
+}

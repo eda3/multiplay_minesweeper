@@ -1,8 +1,16 @@
+use wasm_bindgen::prelude::*;
+use crate::system::{SystemRegistry, SystemPhase};
 use crate::resources::{
-    CoreGameResource, GamePhase, TimeResource, 
-    PlayerStateResource, GameConfigResource, ResourceManager
+    ResourceManager, 
+    PlayerStateResource, 
+    CoreGameResource, 
+    TimeResource, 
+    GameConfigResource,
+    BoardStateResource,
+    BoardConfigResource,
+    GamePhase,
+    Resource
 };
-use crate::system::{SystemRegistry, system_registry::SystemPhase};
 use crate::ecs::World;
 
 /// ECSベースのゲームエンジン
@@ -32,6 +40,9 @@ impl EcsGame {
         // コアリソースの初期化
         self.setup_core_resources();
         
+        // デフォルトシステムを登録
+        self.setup_default_systems();
+        
         // 初期化フェーズのシステムを実行
         self.world.run_startup();
         
@@ -42,6 +53,12 @@ impl EcsGame {
     fn setup_core_resources(&mut self) {
         // Worldのデフォルトリソースをセットアップする機能を使用
         self.world.setup_default_resources();
+    }
+
+    /// デフォルトシステムの設定
+    fn setup_default_systems(&mut self) {
+        // システムレジストリのデフォルトシステム登録を呼び出し
+        self.world.systems_mut().register_default_systems();
     }
 
     /// システムを追加
@@ -77,17 +94,17 @@ impl EcsGame {
     }
 
     /// リソースへの参照を取得
-    pub fn get_resource<T: 'static>(&self) -> Option<&T> {
+    pub fn get_resource<T: Resource>(&self) -> Option<&T> {
         self.world.get_resource::<T>()
     }
 
     /// リソースへの可変参照を取得
-    pub fn get_resource_mut<T: 'static>(&mut self) -> Option<&mut T> {
+    pub fn get_resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
         self.world.get_resource_mut::<T>()
     }
 
     /// リソースを追加または更新
-    pub fn insert_resource<T: 'static>(&mut self, resource: T) {
+    pub fn insert_resource<T: Resource>(&mut self, resource: T) {
         self.world.insert_resource(resource);
     }
 
