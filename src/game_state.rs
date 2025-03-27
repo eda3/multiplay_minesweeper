@@ -256,9 +256,15 @@ impl GameState {
         // 自分をプレイヤーとして追加
         let player = Player {
             id: id.clone(),
+            name: format!("プレイヤー_{}", id),
             x: self.mouse_x,
             y: self.mouse_y,
             color: "#00FF00".to_string(), // 自分は緑色
+            score: 0,
+            is_local: true,
+            is_host: true,
+            is_alive: true,
+            cells_revealed: 0,
         };
         self.players.insert(id, player);
         
@@ -273,9 +279,15 @@ impl GameState {
                     ) {
                         let player = Player {
                             id: player_id.clone(),
+                            name: format!("プレイヤー_{}", player_id),
                             x,
                             y,
                             color: color.to_string(),
+                            score: 0,
+                            is_local: false,
+                            is_host: false,
+                            is_alive: true,
+                            cells_revealed: 0,
                         };
                         self.players.insert(player_id.clone(), player);
                     }
@@ -301,9 +313,15 @@ impl GameState {
     pub fn add_remote_player(&mut self, id: &str, x: f64, y: f64, color: String) {
         let player = Player {
             id: id.to_string(),
+            name: format!("プレイヤー_{}", id),
             x,
             y,
             color,
+            score: 0,
+            is_local: false,
+            is_host: false,
+            is_alive: true,
+            cells_revealed: 0,
         };
         self.players.insert(id.to_string(), player);
         
