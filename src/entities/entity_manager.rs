@@ -4,7 +4,9 @@
  * エンティティの作成、管理、削除を行うマネージャー
  */
 use std::collections::{HashMap, HashSet};
+use std::any::TypeId;
 use crate::entities::entity::{Entity, EntityId};
+use crate::entities::entity_id_generator::EntityIdGenerator;
 
 /// エンティティビルダー
 /// エンティティを簡単に構築するためのビルダーパターン実装
@@ -39,27 +41,61 @@ impl EntityBuilder {
     }
 }
 
+/// 親子関係を表すコンポーネント
+#[derive(Debug, Clone)]
+pub struct Hierarchy {
+    /// 親エンティティID（存在する場合）
+    pub parent: Option<EntityId>,
+    /// 子エンティティIDのリスト
+    pub children: Vec<EntityId>,
+}
+
+impl Hierarchy {
+    /// 新しい階層コンポーネントを作成
+    pub fn new() -> Self {
+        Self {
+            parent: None,
+            children: Vec::new(),
+        }
+    }
+    
+    /// 子エンティティを追加
+    pub fn add_child(&mut self, child_id: EntityId) {
+        if !self.children.contains(&child_id) {
+            self.children.push(child_id);
+        }
+    }
+    
+    /// 子エンティティを削除
+    pub fn remove_child(&mut self, child_id: EntityId) {
+        self.children.retain(|id| *id != child_id);
+    }
+}
+
 /// エンティティマネージャー
 /// ゲーム内の全エンティティを管理する
 #[derive(Debug)]
 pub struct EntityManager {
     /// エンティティの格納庫
     entities: HashMap<EntityId, Entity>,
-    /// 次に割り当てるエンティティID
-    next_id: u64,
+    /// エンティティIDジェネレーター
+    id_generator: EntityIdGenerator,
     /// 削除待ちのエンティティID
     pending_removal: HashSet<EntityId>,
     /// タグごとのエンティティID
     tags_to_entities: HashMap<String, HashSet<EntityId>>,
+    /// コンポーネントタイプごとのエンティティID
+    component_indices: HashMap<TypeId, HashSet<EntityId>>,
 }
 
 impl Default for EntityManager {
     fn default() -> Self {
         Self {
             entities: HashMap::new(),
-            next_id: 1, // 0は無効なIDとして使用
+            id_generator: EntityIdGenerator::default(),
             pending_removal: HashSet::new(),
             tags_to_entities: HashMap::new(),
+            component_indices: HashMap::new(),
         }
     }
 }
@@ -72,8 +108,7 @@ impl EntityManager {
     
     /// 新しいエンティティを作成
     pub fn create_entity(&mut self) -> EntityId {
-        let id = EntityId(self.next_id);
-        self.next_id += 1;
+        let id = self.id_generator.generate();
         
         let entity = Entity::new(id);
         self.entities.insert(id, entity);
@@ -81,10 +116,18 @@ impl EntityManager {
         id
     }
     
+    /// バッチでエンティティを作成
+    pub fn create_entities(&mut self, count: usize) -> Vec<EntityId> {
+        let mut ids = Vec::with_capacity(count);
+        for _ in 0..count {
+            ids.push(self.create_entity());
+        }
+        ids
+    }
+    
     /// エンティティビルダーを取得
     pub fn create_builder(&mut self) -> EntityBuilder {
-        let id = EntityId(self.next_id);
-        self.next_id += 1;
+        let id = self.id_generator.generate();
         
         EntityBuilder::new(id)
     }
@@ -101,6 +144,9 @@ impl EntityManager {
                 .insert(id);
         }
         
+        // コンポーネントタイプのインデックスを更新（将来の高速クエリ用）
+        self.update_component_indices(&entity);
+        
         self.entities.insert(id, entity);
         id
     }
@@ -108,6 +154,39 @@ impl EntityManager {
     /// エンティティを削除
     pub fn remove_entity(&mut self, id: EntityId) {
         self.pending_removal.insert(id);
+    }
+    
+    /// バッチでエンティティを削除
+    pub fn remove_entities<I: IntoIterator<Item = EntityId>>(&mut self, ids: I) {
+        for id in ids {
+            self.pending_removal.insert(id);
+        }
+    }
+    
+    /// 即時エンティティを削除（待機なし）
+    pub fn remove_entity_immediate(&mut self, id: EntityId) -> Option<Entity> {
+        let entity = self.entities.remove(&id)?;
+        
+        // タグマップから削除
+        for tag in entity.get_tags() {
+            if let Some(tag_set) = self.tags_to_entities.get_mut(tag) {
+                tag_set.remove(&id);
+                
+                if tag_set.is_empty() {
+                    self.tags_to_entities.remove(tag);
+                }
+            }
+        }
+        
+        // コンポーネントインデックスから削除
+        for indices in self.component_indices.values_mut() {
+            indices.remove(&id);
+        }
+        
+        // IDをリサイクル
+        self.id_generator.recycle(id);
+        
+        Some(entity)
     }
     
     /// エンティティを取得
@@ -132,10 +211,36 @@ impl EntityManager {
     
     /// 特定のコンポーネントを持つエンティティを全て取得
     pub fn get_entities_with_component<T: 'static>(&self) -> Vec<EntityId> {
+        let type_id = TypeId::of::<T>();
+        
+        // インデックスが構築済みの場合はそれを使用
+        if let Some(indices) = self.component_indices.get(&type_id) {
+            return indices.iter().copied().collect();
+        }
+        
+        // 未構築の場合はフルスキャン
         self.entities.iter()
             .filter(|(_, entity)| entity.has_component::<T>())
             .map(|(id, _)| *id)
             .collect()
+    }
+    
+    /// コンポーネントタイプのインデックスを構築
+    pub fn build_component_index<T: 'static>(&mut self) -> HashSet<EntityId> {
+        let type_id = TypeId::of::<T>();
+        
+        let ids: HashSet<EntityId> = self.entities.iter()
+            .filter_map(|(id, entity)| {
+                if entity.has_component::<T>() {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+            
+        self.component_indices.insert(type_id, ids.clone());
+        ids
     }
     
     /// 特定のタグを持つエンティティを全て取得
@@ -146,22 +251,109 @@ impl EntityManager {
             .unwrap_or_default()
     }
     
-    /// 削除待ちのエンティティを本当に削除する
-    pub fn flush_removals(&mut self) {
-        for id in &self.pending_removal {
-            if let Some(entity) = self.entities.remove(id) {
-                // タグマップからも削除
-                for tag in entity.get_tags() {
-                    if let Some(tag_set) = self.tags_to_entities.get_mut(tag) {
-                        tag_set.remove(id);
-                        
-                        // 空になったらHashSetごと削除
-                        if tag_set.is_empty() {
-                            self.tags_to_entities.remove(tag);
-                        }
+    /// 複数条件によるクエリ：指定したコンポーネントとタグを持つエンティティを取得
+    pub fn query_with_component_and_tag<T: 'static>(&self, tag: &str) -> Vec<EntityId> {
+        // タグによるフィルタ
+        let tag_entities = match self.tags_to_entities.get(tag) {
+            Some(entities) => entities,
+            None => return Vec::new(),
+        };
+        
+        // コンポーネントによるフィルタ
+        self.entities.iter()
+            .filter_map(|(id, entity)| {
+                if tag_entities.contains(id) && entity.has_component::<T>() {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+    
+    /// 親子関係を設定
+    pub fn set_parent(&mut self, child: EntityId, parent: EntityId) -> Result<(), &'static str> {
+        if !self.entities.contains_key(&child) || !self.entities.contains_key(&parent) {
+            return Err("エンティティが存在しません");
+        }
+        
+        // 子エンティティの更新
+        if let Some(child_entity) = self.get_entity_mut(child) {
+            // 子エンティティの階層コンポーネントを取得または作成
+            if !child_entity.has_component::<Hierarchy>() {
+                child_entity.add_component(Hierarchy::new());
+            }
+            
+            // 過去の親情報を一時保存
+            let old_parent = {
+                if let Some(hierarchy) = child_entity.get_component::<Hierarchy>() {
+                    hierarchy.parent
+                } else {
+                    None
+                }
+            };
+            
+            // 新しい親情報を設定
+            if let Some(hierarchy) = child_entity.get_component_mut::<Hierarchy>() {
+                hierarchy.parent = Some(parent);
+            }
+            
+            // 古い親から削除
+            if let Some(old_parent_id) = old_parent {
+                if let Some(old_parent_entity) = self.get_entity_mut(old_parent_id) {
+                    if let Some(parent_hierarchy) = old_parent_entity.get_component_mut::<Hierarchy>() {
+                        parent_hierarchy.remove_child(child);
                     }
                 }
             }
+        }
+        
+        // 親エンティティの更新
+        if let Some(parent_entity) = self.get_entity_mut(parent) {
+            // 親エンティティの階層コンポーネントを取得または作成
+            if !parent_entity.has_component::<Hierarchy>() {
+                parent_entity.add_component(Hierarchy::new());
+            }
+            
+            // 子を追加
+            if let Some(parent_hierarchy) = parent_entity.get_component_mut::<Hierarchy>() {
+                parent_hierarchy.add_child(child);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// 再帰的にエンティティを削除（親が削除されたら子も削除）
+    pub fn remove_entity_recursive(&mut self, id: EntityId) {
+        let children = {
+            if let Some(entity) = self.get_entity(id) {
+                if let Some(hierarchy) = entity.get_component::<Hierarchy>() {
+                    hierarchy.children.clone()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        };
+        
+        // 子エンティティを再帰的に削除
+        for child in children {
+            self.remove_entity_recursive(child);
+        }
+        
+        // 自身を削除
+        self.remove_entity(id);
+    }
+    
+    /// 削除待ちのエンティティを本当に削除する
+    pub fn flush_removals(&mut self) {
+        // 削除待ちリストのコピーを作成（削除中に変更を避けるため）
+        let to_remove: Vec<EntityId> = self.pending_removal.iter().copied().collect();
+        
+        for id in to_remove {
+            self.remove_entity_immediate(id);
         }
         
         self.pending_removal.clear();
@@ -177,6 +369,17 @@ impl EntityManager {
         self.entities.clear();
         self.pending_removal.clear();
         self.tags_to_entities.clear();
-        // IDはリセットしない（一意性を保つため）
+        self.component_indices.clear();
+        // IDジェネレーターはリセットしない（一意性を保つため）
+    }
+    
+    /// コンポーネントインデックスを更新
+    fn update_component_indices(&mut self, _entity: &Entity) {
+        // これは効率的な実装ではありませんが、完全な実装には
+        // Rustのリフレクション機能が必要になります。
+        // 実際の実装では、特定のコンポーネントに対してのみ
+        // インデックスを構築するか、カスタムなトレイトを使用します。
+        
+        // このサンプル実装では簡略化のためスキップします
     }
 } 
