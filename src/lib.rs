@@ -295,4 +295,12 @@ fn setup_event_listeners(canvas_id: &str) -> Result<(), JsValue> {
     request_animation_frame(g.borrow().as_ref().unwrap());
     
     Ok(())
+}
+
+// テスト統合用の設定
+#[cfg(test)]
+mod tests {
+    // 統合テストのインポート
+    #[path = "../tests/mod.rs"]
+    mod tests;
 } 
