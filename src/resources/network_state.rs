@@ -126,7 +126,7 @@ impl NetworkState {
         
         // エラー発生時の処理
         let this_clone = self as *mut NetworkState;
-        let onerror_callback = Closure::wrap(Box::new(move |e: web_sys::Event| {
+        let onerror_callback = Closure::wrap(Box::new(move |_e: web_sys::Event| {
             let network_state = unsafe { &mut *this_clone };
             web_sys::console::error_1(&"WebSocketエラーが発生しました".into());
             network_state.is_connected = false;

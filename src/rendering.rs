@@ -6,6 +6,8 @@ use web_sys::CanvasRenderingContext2d;
 use std::collections::HashMap;
 
 use crate::models::{CellValue, Player, Screen};
+use crate::components::Position;
+use crate::board::Board;
 use crate::js_bindings::log;
 
 /**
@@ -351,5 +353,15 @@ impl GameRenderer {
         )?;
         
         Ok(())
+    }
+
+    pub fn render_players(
+        &self,
+        _players: &HashMap<String, Position>,
+        _board: &Board,
+        _local_player_id: &Option<String>
+    ) {
+        // 未実装のスタブメソッド
+        // 将来的には実装する予定
     }
 } 

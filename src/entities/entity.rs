@@ -96,4 +96,25 @@ impl Entity {
     pub fn get_tags(&self) -> &[String] {
         &self.tags
     }
+    
+    /// コンポーネントを追加（ボックス化済み）
+    pub fn add_component_boxed(&mut self, type_id: TypeId, component: Box<dyn Any + Send + Sync>) -> &mut Self {
+        self.components.insert(type_id, component);
+        self
+    }
+    
+    /// 持っているコンポーネントの型IDリストを取得
+    pub fn get_component_types(&self) -> Vec<TypeId> {
+        self.components.keys().cloned().collect()
+    }
+    
+    /// コンポーネントの数を取得
+    pub fn component_count(&self) -> usize {
+        self.components.len()
+    }
+    
+    /// 指定したコンポーネントを持っているか確認（TypeIdから）
+    pub fn has_component_by_type_id(&self, type_id: TypeId) -> bool {
+        self.components.contains_key(&type_id)
+    }
 } 
