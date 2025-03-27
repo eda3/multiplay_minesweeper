@@ -26,5 +26,5 @@ pub use network_state::NetworkState;
 pub use core_game::{CoreGameResource, GamePhase};
 pub use time::TimeResource;
 pub use game_config::{GameConfigResource, BoardConfig, Difficulty};
-pub use player_state::{PlayerStateResource, Player as EcsPlayer};
+pub use player_state::{PlayerStateResource, Player as EcsPlayer, MouseState};
 pub use resource_manager::{ResourceManager, ResourceBatch, ResourceBatchMut}; 

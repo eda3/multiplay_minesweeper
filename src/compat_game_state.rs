@@ -20,9 +20,8 @@ use crate::board::Board;
 use crate::ecs_game::EcsGame;
 use crate::resources::{
     CoreGameResource, GamePhase, TimeResource, 
-    PlayerStateResource, GameConfigResource
+    PlayerStateResource, GameConfigResource, MouseState
 };
-use crate::resources::player_state::MouseState;
 
 /**
  * ゲーム全体の状態を管理する互換構造体
@@ -479,7 +478,7 @@ impl CompatGameState {
             
             // マウスボタンの状態も更新
             if self.mouse_down {
-                player_state.set_mouse_state(MouseState::Down);
+                player_state.set_mouse_state(MouseState::LeftDown);
             } else {
                 player_state.set_mouse_state(MouseState::Up);
             }
@@ -695,7 +694,7 @@ impl CompatGameState {
         
         // PlayerStateResourceも更新
         if let Some(player_state) = self.ecs_game.get_resource_mut::<PlayerStateResource>() {
-            player_state.set_mouse_state(if down { MouseState::Down } else { MouseState::Up });
+            player_state.set_mouse_state(if down { MouseState::LeftDown } else { MouseState::Up });
         }
     }
     
