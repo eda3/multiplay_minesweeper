@@ -10,6 +10,7 @@ mod system_group;
 mod system_registry;
 mod parallel_executor;
 mod system_scheduler;
+mod resource_dependency;
 #[cfg(test)]
 mod tests;
 
@@ -18,4 +19,5 @@ pub use system_trait::System;
 pub use system_group::SystemGroup;
 pub use system_registry::SystemRegistry;
 pub use parallel_executor::ParallelExecutor;
-pub use system_scheduler::{SystemScheduler, RateControlledSystem}; 
+pub use system_scheduler::{SystemScheduler, RateControlledSystem};
+pub use resource_dependency::{ResourceDependency, ReadResource, WriteResource, ResourceSet, NoResources}; 

@@ -37,4 +37,7 @@ pub use network_system::{process_network_messages, send_player_updates};
 pub use ui_system::{process_ui_interactions, update_ui_elements};
 
 // 最適化されたシステムコンポーネントも再エクスポート
-pub use optimized::{System, SystemGroup, SystemScheduler, RateControlledSystem}; 
+pub use optimized::{
+    System, SystemGroup, SystemScheduler, RateControlledSystem,
+    ResourceDependency, ReadResource, WriteResource, ResourceSet, NoResources
+}; 
