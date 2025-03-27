@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::resources::ResourceManager;
+use std::fmt;
 
 /// システムの実行フェーズ
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -255,6 +256,18 @@ impl SystemRegistry {
         } else {
             None
         }
+    }
+}
+
+impl fmt::Debug for SystemRegistry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SystemRegistry")
+            .field("systems_count", &self.systems.len())
+            .field("next_id", &self.next_id)
+            .field("phase_systems", &self.phase_systems)
+            .field("dependencies", &self.dependencies)
+            .field("dirty", &self.dirty)
+            .finish()
     }
 }
 

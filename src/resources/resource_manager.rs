@@ -17,6 +17,15 @@ pub struct ResourceManager {
     resources: HashMap<TypeId, Box<dyn Any>>,
 }
 
+impl Debug for ResourceManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResourceManager")
+            .field("resource_count", &self.resources.len())
+            .field("resource_type_ids", &self.resources.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 impl ResourceManager {
     /// 新しいリソースマネージャーを作成
     pub fn new() -> Self {

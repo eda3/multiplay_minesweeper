@@ -6,6 +6,9 @@
  */
 use crate::entities::EntityManager;
 use crate::resources::ResourceManager;
+use crate::system::{SystemRegistry, System};
+use crate::resources::{ResourceBatch, ResourceBatchMut};
+use std::any::Any;
 
 /// World構造体 - ECSの中心的なコンテナ
 #[derive(Debug)]
@@ -14,6 +17,8 @@ pub struct World {
     entity_manager: EntityManager,
     /// リソースマネージャー
     resource_manager: ResourceManager,
+    /// システムレジストリ
+    system_registry: SystemRegistry,
 }
 
 impl Default for World {
@@ -21,6 +26,7 @@ impl Default for World {
         Self {
             entity_manager: EntityManager::new(),
             resource_manager: ResourceManager::new(),
+            system_registry: SystemRegistry::new(),
         }
     }
 }
@@ -73,7 +79,13 @@ impl World {
     
     /// 複数のリソースを一度に取得（一部可変）
     pub fn get_resources_mut<A: 'static, B: 'static>(&mut self) -> Option<(&A, &mut B)> {
-        self.resource_manager.get_multi_mut::<A, B>()
+        if let Some((a, b)) = self.resource_manager.get_multi_mut::<A, B>() {
+            // 不変参照として再構築
+            let a_ref = a as &A;
+            Some((a_ref, b))
+        } else {
+            None
+        }
     }
     
     /// リソースマネージャーを取得（不変）
@@ -89,17 +101,17 @@ impl World {
     /// リソースバッチ処理（読み取り専用）
     pub fn with_resources<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&crate::resources::ResourceBatch) -> R,
+        F: FnOnce(&ResourceBatch) -> R,
     {
-        self.resource_manager.batch(f)
+        self.resource_manager.batch(|batch| f(&batch))
     }
     
     /// リソースバッチ処理（読み書き）
     pub fn with_resources_mut<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(&mut crate::resources::ResourceBatchMut) -> R,
+        F: FnOnce(&mut ResourceBatchMut) -> R,
     {
-        self.resource_manager.batch_mut(f)
+        self.resource_manager.batch_mut(|mut batch| f(&mut batch))
     }
     
     /// 初期リソースを追加
@@ -130,5 +142,46 @@ impl World {
         if !self.has_resource::<GameConfigResource>() {
             self.insert_resource(GameConfigResource::new());
         }
+    }
+    
+    /// システムを追加
+    pub fn add_system<S>(&mut self, system: S) -> usize
+    where
+        S: 'static + System,
+    {
+        self.system_registry.add_system(Box::new(system))
+    }
+    
+    /// スタートアップフェーズのシステムを実行
+    pub fn run_startup(&mut self) {
+        self.system_registry.run_startup(&mut self.resource_manager);
+    }
+    
+    /// 全フェーズのシステムを実行
+    pub fn run_systems(&mut self) {
+        self.system_registry.run_all_phases(&mut self.resource_manager);
+    }
+    
+    /// 特定のフェーズのシステムのみを実行
+    pub fn run_phase(&mut self, phase: crate::system::system_registry::SystemPhase) {
+        self.system_registry.run_phase(phase, &mut self.resource_manager);
+    }
+    
+    /// システムレジストリを取得（不変）
+    pub fn systems(&self) -> &SystemRegistry {
+        &self.system_registry
+    }
+    
+    /// システムレジストリを取得（可変）
+    pub fn systems_mut(&mut self) -> &mut SystemRegistry {
+        &mut self.system_registry
+    }
+    
+    /// 指定したIDのシステムを取得（テスト用）
+    pub fn get_system(&self, id: crate::system::system_registry::SystemId) -> Option<&dyn Any> {
+        // SystemからAnyへの変換は直接はできないので、
+        // システムレジストリの既存APIを通じてシステムを取得し、
+        // それをAnyとして返す（これはテスト用なので簡易的な実装です）
+        None  // テスト用なので一旦Noneを返す
     }
 } 
