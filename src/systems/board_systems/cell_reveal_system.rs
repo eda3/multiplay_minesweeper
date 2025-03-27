@@ -303,7 +303,7 @@ impl System for CellRevealSystem {
         // セル公開処理を実行
         match reveal_cell(row, col, entity_manager, &mut board_state, &board_config) {
             Ok(_) => (),
-            Err(_) => return SystemResult::Err("セルの公開に失敗しました".into()),
+            Err(_) => return SystemResult::Error,
         }
         
         SystemResult::Ok

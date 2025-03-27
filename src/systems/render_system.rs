@@ -208,8 +208,8 @@ fn draw_renderables(
                 // 画像描画
                 crate::components::RenderType::Image(image_ref) => {
                     let image: &HtmlImageElement = image_ref.as_ref();
-                    context.draw_image_with_html_image_element(
-                        image,
+                    context.draw_image_with_html_canvas_element(
+                        &image.clone().into(),
                         position.x - (image.width() as f64 / 2.0),
                         position.y - (image.height() as f64 / 2.0),
                     )?;

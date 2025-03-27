@@ -550,4 +550,32 @@ impl EntityManager {
         // get_entities_with_component メソッドを呼び出して結果を返す
         self.get_entities_with_component::<T>()
     }
+    
+    /// 複数のコンポーネントを持つエンティティをすべて検索
+    pub fn find_entities_with_components<T: 'static>(&self) -> Vec<EntityId> 
+    where 
+        T: ComponentTuple,
+    {
+        T::find_entities_with_components(self)
+    }
 }
+
+/// 複数のコンポーネントタイプの組み合わせを表すトレイト
+pub trait ComponentTuple {
+    fn find_entities_with_components(entity_manager: &EntityManager) -> Vec<EntityId>;
+}
+
+// 2つのコンポーネントタイプの組み合わせ用の実装
+impl<A: 'static, B: 'static> ComponentTuple for (A, B) {
+    fn find_entities_with_components(entity_manager: &EntityManager) -> Vec<EntityId> {
+        // 最初のコンポーネントタイプを持つエンティティを取得
+        let entities_with_a = entity_manager.get_entities_with_component::<A>();
+        
+        // その中から2番目のコンポーネントタイプも持つエンティティだけをフィルタリング
+        entities_with_a.into_iter()
+            .filter(|&entity_id| entity_manager.has_component::<B>(entity_id))
+            .collect()
+    }
+}
+
+// 他の組み合わせ（3つ以上のコンポーネント）も必要に応じて実装できる

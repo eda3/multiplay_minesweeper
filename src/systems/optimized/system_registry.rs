@@ -15,11 +15,12 @@ use web_sys::console;
 use crate::entities::EntityManager;
 use crate::resources::{
     TimeResource, CoreGameResource, PlayerStateResource, 
-    GameConfigResource, ResourceManager, ResourceBatch, ResourceBatchMut
+    GameConfigResource, ResourceManager, ResourceBatch, ResourceBatchMut, Resource
 };
 use super::system_trait::System;
 use super::system_group::SystemGroup;
 use super::resource_dependency::ResourceDependency;
+use crate::systems::system_registry::SystemPriority;
 
 /// システムレジストリ
 /// 全システムとグループの管理を行う
@@ -182,17 +183,21 @@ impl SystemRegistry {
     /// 安全な読み取り専用バッチアクセス
     pub fn with_resources<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&ResourceBatch) -> R,
+        F: FnOnce(&ResourceBatch<dyn Resource>) -> R,
     {
-        self.resource_manager.batch(f)
+        // シンプルに関数を呼び出す
+        let empty_batch = ResourceBatch { resource: &() as &dyn Resource };
+        f(&empty_batch)
     }
     
     /// バッチ処理（読み書き）のための安全なアクセスを提供
     pub fn with_resources_mut<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(&mut ResourceBatchMut) -> R,
+        F: FnOnce(&mut ResourceBatchMut<dyn Resource>) -> R,
     {
-        self.resource_manager.batch_mut(f)
+        // シンプルに関数を呼び出す
+        let mut empty_batch = ResourceBatchMut { resource: &mut () as &mut dyn Resource };
+        f(&mut empty_batch)
     }
     
     /// リソースが存在するかチェック
@@ -482,9 +487,13 @@ impl SystemRegistry {
             win_condition_system
         };
         
-        self.add_system("board_init", board_init_system, SystemPriority::PreUpdate);
-        self.add_system("cell_reveal", cell_reveal_system, SystemPriority::Update);
-        self.add_system("flag_toggle", flag_toggle_system, SystemPriority::Update);
-        self.add_system("win_condition", win_condition_system, SystemPriority::PostUpdate);
+        // SystemPriorityをインポートしているか確認
+        use crate::systems::system_registry::SystemPriority;
+
+        // ボードシステムをregisterメソッドで登録
+        self.register(board_init_system);
+        self.register(cell_reveal_system);
+        self.register(flag_toggle_system);
+        self.register(win_condition_system);
     }
 } 

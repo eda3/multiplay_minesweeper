@@ -43,7 +43,7 @@ impl<T: 'static + std::fmt::Debug> Debug for ReadResource<T> {
     }
 }
 
-impl<T: 'static> ResourceDependency for ReadResource<T> {
+impl<T: 'static + std::fmt::Debug> ResourceDependency for ReadResource<T> {
     fn resource_type_ids(&self) -> Vec<TypeId> {
         vec![TypeId::of::<T>()]
     }
@@ -80,7 +80,7 @@ impl<T: 'static + std::fmt::Debug> Debug for WriteResource<T> {
     }
 }
 
-impl<T: 'static> ResourceDependency for WriteResource<T> {
+impl<T: 'static + std::fmt::Debug> ResourceDependency for WriteResource<T> {
     fn resource_type_ids(&self) -> Vec<TypeId> {
         vec![TypeId::of::<T>()]
     }

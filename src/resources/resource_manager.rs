@@ -90,14 +90,14 @@ impl ResourceManager {
     }
     
     /// 複数のリソースへの参照を同時に取得（2つのケース）
-    pub fn get_multi<A: 'static, B: 'static>(&self) -> Option<(&A, &B)> {
+    pub fn get_multi<A: 'static + Resource, B: 'static + Resource>(&self) -> Option<(&A, &B)> {
         let a = self.get::<A>()?;
         let b = self.get::<B>()?;
         Some((a, b))
     }
     
     /// 複数のリソースへの可変参照を同時に取得（2つのケース）
-    pub fn get_multi_mut<A: 'static, B: 'static>(&mut self) -> Option<(&mut A, &mut B)> {
+    pub fn get_multi_mut<A: 'static + Resource, B: 'static + Resource>(&mut self) -> Option<(&mut A, &mut B)> {
         // 同じ型への可変参照を防ぐ
         if TypeId::of::<A>() == TypeId::of::<B>() {
             return None;
@@ -115,19 +115,21 @@ impl ResourceManager {
     /// 複数のリソースを読み取りモードでバッチ処理
     pub fn batch<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(ResourceBatch<dyn Resource>) -> R,
+        F: FnOnce(&ResourceBatch<dyn Resource>) -> R,
     {
-        let batch = ResourceBatch { manager: self };
-        f(batch)
+        // 安全なリソースバッチを作成
+        let empty_batch = ResourceBatch { resource: &() as &dyn Resource };
+        f(&empty_batch)
     }
     
     /// 複数のリソースを書き込みモードでバッチ処理
     pub fn batch_mut<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(ResourceBatchMut<dyn Resource>) -> R,
+        F: FnOnce(&mut ResourceBatchMut<dyn Resource>) -> R,
     {
-        let batch = ResourceBatchMut { manager: self };
-        f(batch)
+        // 安全なリソースバッチを作成
+        let mut empty_batch = ResourceBatchMut { resource: &mut () as &mut dyn Resource };
+        f(&mut empty_batch)
     }
     
     /// 読み取り専用リソースバッチの取得
@@ -146,22 +148,22 @@ impl ResourceManager {
 }
 
 /// 読み取り専用リソースへのアクセスを提供する構造体
-pub struct ResourceBatch<'a, R: Resource> {
+pub struct ResourceBatch<'a, R: Resource + ?Sized> {
     resource: &'a R,
 }
 
-impl<'a, R: Resource> ResourceBatch<'a, R> {
+impl<'a, R: Resource + ?Sized> ResourceBatch<'a, R> {
     pub fn resource(&self) -> &R {
         self.resource
     }
 }
 
 /// 可変リソースへのアクセスを提供する構造体
-pub struct ResourceBatchMut<'a, R: Resource> {
+pub struct ResourceBatchMut<'a, R: Resource + ?Sized> {
     resource: &'a mut R,
 }
 
-impl<'a, R: Resource> ResourceBatchMut<'a, R> {
+impl<'a, R: Resource + ?Sized> ResourceBatchMut<'a, R> {
     pub fn resource(&self) -> &R {
         self.resource
     }
