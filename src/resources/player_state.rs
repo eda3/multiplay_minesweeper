@@ -4,249 +4,291 @@
  * ローカルプレイヤーと他プレイヤーの情報を管理するリソース
  */
 use std::collections::HashMap;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use js_sys::{JSON, Object, Reflect};
+use js_sys::{Date, JSON, Object, Reflect};
+use serde::{Serialize, Deserialize};
+use wasm_bindgen::JsValue;
+use crate::models::Player as GamePlayer;
 
-use crate::models::Player;
+/// マウスの状態
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseState {
+    /// マウスが押されていない
+    Up,
+    /// 左ボタンが押されている
+    LeftDown,
+    /// 右ボタンが押されている
+    RightDown,
+}
+
+/// ECSリソースとしてのプレイヤー
+#[derive(Debug, Clone)]
+pub struct Player {
+    /// プレイヤーID
+    pub id: String,
+    /// X座標
+    pub x: f64,
+    /// Y座標
+    pub y: f64,
+    /// プレイヤーのカラー（CSS形式）
+    pub color: String,
+    /// アクティブかどうか
+    pub active: bool,
+    /// 最終更新時刻
+    pub last_update: f64,
+}
 
 /// プレイヤー状態リソース
-#[derive(Debug, Clone)]
+/// マルチプレイヤーゲームにおけるプレイヤーの状態を管理する
+#[derive(Debug)]
 pub struct PlayerStateResource {
     /// ローカルプレイヤーID
     pub local_player_id: Option<String>,
-    /// 全プレイヤーの情報
-    pub players: HashMap<String, Player>,
+    /// 全プレイヤーのマップ
+    players: HashMap<String, Player>,
     /// マウスX座標
     pub mouse_x: f64,
     /// マウスY座標
     pub mouse_y: f64,
-    /// マウスボタン押下状態
-    pub is_mouse_down: bool,
-    /// 最後に位置情報を送信した時間
+    /// マウスの状態
+    pub mouse_state: MouseState,
+    /// 最後の位置更新時間
     pub last_position_update: f64,
-    /// 最後に入力されたキー
-    pub last_key: Option<String>,
+    /// 最後に押されたキー
+    pub last_key_pressed: Option<String>,
     /// アクティブなプレイヤー数
     pub active_player_count: usize,
 }
 
 impl Default for PlayerStateResource {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PlayerStateResource {
+    /// 新しいPlayerStateResourceを作成
+    pub fn new() -> Self {
         Self {
             local_player_id: None,
             players: HashMap::new(),
             mouse_x: 0.0,
             mouse_y: 0.0,
-            is_mouse_down: false,
+            mouse_state: MouseState::Up,
             last_position_update: 0.0,
-            last_key: None,
+            last_key_pressed: None,
             active_player_count: 0,
         }
     }
-}
 
-impl PlayerStateResource {
-    /// 新しいプレイヤー状態リソースを作成
-    pub fn new() -> Self {
-        Self::default()
-    }
-    
-    /// ローカルプレイヤーのIDを設定
+    /// ローカルプレイヤーIDを設定
     pub fn set_local_player_id(&mut self, id: String) {
         self.local_player_id = Some(id);
     }
-    
-    /// ローカルプレイヤーの情報を取得
-    pub fn get_local_player(&self) -> Option<&Player> {
-        self.local_player_id.as_ref()
-            .and_then(|id| self.players.get(id))
-    }
-    
-    /// ローカルプレイヤーの情報を取得（可変）
-    pub fn get_local_player_mut(&mut self) -> Option<&mut Player> {
+
+    /// ローカルプレイヤーを取得
+    pub fn local_player(&self) -> Option<&Player> {
         if let Some(id) = &self.local_player_id {
-            self.players.get_mut(id)
+            self.players.get(id)
         } else {
             None
         }
     }
-    
-    /// プレイヤーを追加
-    pub fn add_player(&mut self, player: Player) {
-        let id = player.id.clone();
-        self.players.insert(id, player);
-        self.update_player_count();
+
+    /// ローカルプレイヤーを可変で取得
+    pub fn local_player_mut(&mut self) -> Option<&mut Player> {
+        if let Some(id) = self.local_player_id.clone() {
+            self.players.get_mut(&id)
+        } else {
+            None
+        }
     }
-    
-    /// IDを指定してプレイヤーを追加
-    pub fn add_player_with_id(&mut self, id: String, x: f64, y: f64, color: String) {
+
+    /// プレイヤーを追加
+    pub fn add_player(&mut self, id: String, x: f64, y: f64, color: String) -> &Player {
         let player = Player {
             id: id.clone(),
-            name: format!("プレイヤー_{}", id),
-            color,
-            score: 0,
             x,
             y,
-            is_local: self.local_player_id.as_ref().map_or(false, |local_id| *local_id == id),
-            is_host: false,
-            is_alive: true,
-            cells_revealed: 0,
+            color,
+            active: true,
+            last_update: Date::now(),
         };
-        self.players.insert(id, player);
-        self.update_player_count();
+
+        self.players.insert(id.clone(), player);
+        self.update_active_count();
+        self.players.get(&id).unwrap()
     }
-    
-    /// 複数のプレイヤーを追加
-    pub fn add_players_from_json(&mut self, json: &JsValue) -> Result<(), JsValue> {
-        let players_array = js_sys::Array::from(json);
-        let len = players_array.length();
-        for i in 0..len {
-            if let Some(player_obj) = players_array.get(i).dyn_into::<Object>().ok() {
-                let id = Reflect::get(&player_obj, &"id".into())?
-                    .as_string()
-                    .unwrap_or_default();
-                
-                let x = Reflect::get(&player_obj, &"x".into())?
-                    .as_f64()
-                    .unwrap_or(0.0);
-                
-                let y = Reflect::get(&player_obj, &"y".into())?
-                    .as_f64()
-                    .unwrap_or(0.0);
-                
-                let color = Reflect::get(&player_obj, &"color".into())?
-                    .as_string()
-                    .unwrap_or("#FF0000".to_string());
-                
-                self.add_player_with_id(id, x, y, color);
-            }
-        }
-        
-        self.update_player_count();
-        Ok(())
-    }
-    
+
     /// プレイヤーを削除
     pub fn remove_player(&mut self, id: &str) {
         self.players.remove(id);
-        self.update_player_count();
+        self.update_active_count();
     }
-    
+
+    /// プレイヤーが存在するかチェック
+    pub fn has_player(&self, id: &str) -> bool {
+        self.players.contains_key(id)
+    }
+
+    /// 全プレイヤーを取得
+    pub fn all_players(&self) -> &HashMap<String, Player> {
+        &self.players
+    }
+
+    /// アクティブなプレイヤー数を更新
+    fn update_active_count(&mut self) {
+        self.active_player_count = self.players.values().filter(|p| p.active).count();
+    }
+
     /// プレイヤーの位置を更新
     pub fn update_player_position(&mut self, id: &str, x: f64, y: f64) {
         if let Some(player) = self.players.get_mut(id) {
             player.x = x;
             player.y = y;
+            player.last_update = Date::now();
         }
-    }
-    
-    /// ローカルプレイヤーの位置を更新
-    pub fn update_local_position(&mut self, x: f64, y: f64) {
-        self.mouse_x = x;
-        self.mouse_y = y;
-        
-        if let Some(player) = self.get_local_player_mut() {
-            player.x = x;
-            player.y = y;
-        }
-    }
-    
-    /// マウスの状態を更新
-    pub fn update_mouse_state(&mut self, x: f64, y: f64, is_down: bool) {
-        self.mouse_x = x;
-        self.mouse_y = y;
-        self.is_mouse_down = is_down;
-    }
-    
-    /// プレイヤー数を更新
-    fn update_player_count(&mut self) {
-        self.active_player_count = self.players.len();
-    }
-    
-    /// プレイヤー情報をJSONに変換
-    pub fn get_player_as_json(&self, id: &str) -> Option<JsValue> {
-        self.players.get(id).map(|player| {
-            let obj = Object::new();
-            let _ = Reflect::set(&obj, &"id".into(), &player.id.clone().into());
-            let _ = Reflect::set(&obj, &"x".into(), &player.x.into());
-            let _ = Reflect::set(&obj, &"y".into(), &player.y.into());
-            let _ = Reflect::set(&obj, &"color".into(), &player.color.clone().into());
-            obj.into()
-        })
     }
 
-    pub fn players_from_json(&mut self, json: JsValue) -> Result<(), String> {
-        self.players.clear();
+    /// ローカルプレイヤーの位置を更新
+    pub fn update_local_player_position(&mut self, x: f64, y: f64) {
+        if let Some(id) = self.local_player_id.clone() {
+            self.update_player_position(&id, x, y);
+        }
+    }
+
+    /// マウス状態を更新
+    pub fn set_mouse_state(&mut self, state: MouseState) {
+        self.mouse_state = state;
+    }
+
+    /// JSONからプレイヤーを追加
+    pub fn add_players_from_json(&mut self, json: &JsValue) -> Result<(), JsValue> {
+        let obj = js_sys::Object::from(json.clone());
         
-        // JSONから配列を取得
-        let players_array = js_sys::Array::from(&json);
-        for i in 0..players_array.length() {
-            if let Ok(player_json) = players_array.get(i).dyn_into::<js_sys::Object>() {
-                // JsValueをPlayerに変換する（ここではシンプルな方法を使用）
-                let id = js_sys::Reflect::get(&player_json, &"id".into())
-                    .map_err(|e| format!("ID取得エラー: {:?}", e))?
-                    .as_string()
-                    .unwrap_or_default();
-                    
-                let name = js_sys::Reflect::get(&player_json, &"name".into())
-                    .map_err(|e| format!("名前取得エラー: {:?}", e))?
-                    .as_string()
-                    .unwrap_or_else(|| format!("プレイヤー_{}", id));
-                    
-                let color = js_sys::Reflect::get(&player_json, &"color".into())
-                    .map_err(|e| format!("色取得エラー: {:?}", e))?
-                    .as_string()
-                    .unwrap_or("#FF0000".to_string());
-                    
-                let score = js_sys::Reflect::get(&player_json, &"score".into())
-                    .map(|v| v.as_f64().unwrap_or(0.0) as u32)
-                    .unwrap_or(0);
-                    
-                let x = js_sys::Reflect::get(&player_json, &"x".into())
-                    .map_err(|e| format!("X座標取得エラー: {:?}", e))?
-                    .as_f64()
-                    .unwrap_or(0.0);
-                    
-                let y = js_sys::Reflect::get(&player_json, &"y".into())
-                    .map_err(|e| format!("Y座標取得エラー: {:?}", e))?
-                    .as_f64()
-                    .unwrap_or(0.0);
-                    
-                let is_local = js_sys::Reflect::get(&player_json, &"is_local".into())
-                    .map(|v| v.as_bool().unwrap_or(false))
-                    .unwrap_or(false);
-                    
-                let is_host = js_sys::Reflect::get(&player_json, &"is_host".into())
-                    .map(|v| v.as_bool().unwrap_or(false))
-                    .unwrap_or(false);
-                    
-                let is_alive = js_sys::Reflect::get(&player_json, &"is_alive".into())
-                    .map(|v| v.as_bool().unwrap_or(true))
-                    .unwrap_or(true);
-                    
-                let cells_revealed = js_sys::Reflect::get(&player_json, &"cells_revealed".into())
-                    .map(|v| v.as_f64().unwrap_or(0.0) as usize)
-                    .unwrap_or(0);
-                    
-                let player = Player {
-                    id: id.clone(),
-                    name,
-                    color,
-                    score,
-                    x,
-                    y,
-                    is_local,
-                    is_host,
-                    is_alive,
-                    cells_revealed,
-                };
-                
-                self.players.insert(id, player);
+        // プレイヤー情報を取得
+        if let Some(players_val) = js_sys::Reflect::get(&obj, &"players".into()).ok() {
+            // 文字列形式のJSON
+            let players_str = players_val.as_string().ok_or_else(|| {
+                JsValue::from_str("Players value is not a string")
+            })?;
+            
+            let players: serde_json::Value = serde_json::from_str(&players_str).map_err(|e| {
+                JsValue::from_str(&format!("Failed to parse players JSON: {}", e))
+            })?;
+            
+            if let Some(players_obj) = players.as_object() {
+                for (id, player) in players_obj {
+                    if let (Some(x), Some(y), Some(color)) = (
+                        player.get("x").and_then(|v| v.as_f64()),
+                        player.get("y").and_then(|v| v.as_f64()),
+                        player.get("color").and_then(|v| v.as_str()),
+                    ) {
+                        self.add_player(id.clone(), x, y, color.to_string());
+                    }
+                }
             }
         }
         
-        self.update_player_count();
         Ok(())
+    }
+    
+    /// プレイヤー情報をJSON形式で取得
+    pub fn players_to_json(&self) -> String {
+        let mut players = serde_json::Map::new();
+        
+        for (id, player) in &self.players {
+            let mut player_obj = serde_json::Map::new();
+            player_obj.insert("x".to_string(), serde_json::Value::from(player.x));
+            player_obj.insert("y".to_string(), serde_json::Value::from(player.y));
+            player_obj.insert("color".to_string(), serde_json::Value::from(player.color.clone()));
+            player_obj.insert("active".to_string(), serde_json::Value::from(player.active));
+            
+            players.insert(id.clone(), serde_json::Value::Object(player_obj));
+        }
+        
+        serde_json::Value::Object(players).to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_add_and_remove_player() {
+        let mut player_state = PlayerStateResource::new();
+        
+        // プレイヤーを追加
+        player_state.add_player("p1".to_string(), 10.0, 20.0, "#ff0000".to_string());
+        player_state.add_player("p2".to_string(), 30.0, 40.0, "#00ff00".to_string());
+        
+        // プレイヤー数の確認
+        assert_eq!(player_state.active_player_count, 2);
+        
+        // プレイヤーの存在確認
+        assert!(player_state.has_player("p1"));
+        assert!(player_state.has_player("p2"));
+        
+        // プレイヤーを削除
+        player_state.remove_player("p1");
+        
+        // 削除後の確認
+        assert_eq!(player_state.active_player_count, 1);
+        assert!(!player_state.has_player("p1"));
+        assert!(player_state.has_player("p2"));
+    }
+    
+    #[test]
+    fn test_update_player_position() {
+        let mut player_state = PlayerStateResource::new();
+        
+        // プレイヤーを追加
+        player_state.add_player("p1".to_string(), 10.0, 20.0, "#ff0000".to_string());
+        
+        // 位置を更新
+        player_state.update_player_position("p1", 15.0, 25.0);
+        
+        // 更新後の位置を確認
+        let player = player_state.players.get("p1").unwrap();
+        assert_eq!(player.x, 15.0);
+        assert_eq!(player.y, 25.0);
+    }
+    
+    #[test]
+    fn test_local_player() {
+        let mut player_state = PlayerStateResource::new();
+        
+        // ローカルプレイヤーを設定
+        player_state.add_player("local".to_string(), 10.0, 20.0, "#ff0000".to_string());
+        player_state.set_local_player_id("local".to_string());
+        
+        // ローカルプレイヤーの取得
+        let local = player_state.local_player().unwrap();
+        assert_eq!(local.id, "local");
+        
+        // ローカルプレイヤーの位置を更新
+        player_state.update_local_player_position(15.0, 25.0);
+        
+        // 更新後の位置を確認
+        let local = player_state.local_player().unwrap();
+        assert_eq!(local.x, 15.0);
+        assert_eq!(local.y, 25.0);
+    }
+    
+    #[test]
+    fn test_mouse_state() {
+        let mut player_state = PlayerStateResource::new();
+        
+        // 初期状態の確認
+        assert_eq!(player_state.mouse_state, MouseState::Up);
+        
+        // 状態を変更
+        player_state.set_mouse_state(MouseState::LeftDown);
+        assert_eq!(player_state.mouse_state, MouseState::LeftDown);
+        
+        player_state.set_mouse_state(MouseState::RightDown);
+        assert_eq!(player_state.mouse_state, MouseState::RightDown);
     }
 } 

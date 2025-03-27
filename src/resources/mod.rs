@@ -16,13 +16,15 @@ mod game_config;
 mod player_state;
 mod resource_manager;
 
-// リソースを再エクスポート
-pub use board_config::BoardConfig;
-pub use game_state::{GameState, GamePhase};
+// 既存のリソースを再エクスポート（名前衝突を避けるためにリネーム）
+pub use board_config::BoardConfig as OldBoardConfig;
+pub use game_state::{GameState, GamePhase as OldGamePhase};
 pub use render_state::RenderState;
 pub use network_state::NetworkState;
-pub use core_game::{CoreGameResource, GamePhase as CoreGamePhase};
+
+// 新しいECSリソースを公開
+pub use core_game::{CoreGameResource, GamePhase};
 pub use time::TimeResource;
-pub use game_config::GameConfigResource;
-pub use player_state::PlayerStateResource;
+pub use game_config::{GameConfigResource, BoardConfig, Difficulty};
+pub use player_state::{PlayerStateResource, Player as EcsPlayer};
 pub use resource_manager::{ResourceManager, ResourceBatch, ResourceBatchMut}; 

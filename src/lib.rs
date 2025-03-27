@@ -25,12 +25,16 @@ mod rendering;
 mod network;
 mod board;
 mod components; // ECSコンポーネント
-mod resources;  // ECSリソース
+pub mod resources;  // ECSリソース
 mod entities;   // ECSエンティティ
+pub mod system;
+pub mod ecs_game;
 
 // サブモジュールからの要素をインポート
 use js_bindings::{log, request_animation_frame};
 use game_state::GameState;
+
+pub use ecs_game::EcsGame;
 
 /**
  * ゲームのエントリーポイント
