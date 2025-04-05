@@ -1,47 +1,41 @@
 /**
  * 時間リソース
  * 
- * ゲーム内の時間管理を担当する
+ * ゲーム内の時間管理を行うリソース
  */
-use super::resource_trait::Resource;
-use wasm_bindgen::prelude::*;
-use js_sys::Date;
-use std::any::Any;
+
 use std::time::{Duration, Instant};
 
-/// ゲーム内時間管理リソース
+/// 時間管理リソース
 #[derive(Debug, Clone)]
 pub struct TimeResource {
-    /// 前回のフレーム時間
-    pub previous_time: Instant,
-    /// 現在の時間
-    pub current_time: Instant,
-    /// デルタタイム（前回のフレームからの経過時間、秒単位）
+    /// ゲーム開始時刻
+    pub start_time: Option<Instant>,
+    /// 最後のフレーム時刻
+    pub last_frame_time: Instant,
+    /// フレーム間の経過時間（秒）
     pub delta_time: f64,
-    /// フレーム数
-    pub frame_count: u64,
-    /// フレームレート（FPS）
-    pub fps: f64,
-    /// FPS計算用の時間累積
-    pub fps_time_accumulator: f64,
-    /// FPS計算用のフレーム数
-    pub fps_frame_accumulator: u32,
-    /// 固定デルタタイム（オプション）
-    pub fixed_delta: Option<f64>,
+    /// 合計経過時間（秒）
+    pub total_time: f64,
+    /// 前回のティック時刻
+    pub last_tick_time: Instant,
+    /// ティック間隔（秒）
+    pub tick_interval: f64,
+    /// ポーズ状態
+    pub paused: bool,
 }
 
 impl Default for TimeResource {
     fn default() -> Self {
         let now = Instant::now();
         Self {
-            previous_time: now,
-            current_time: now,
+            start_time: None,
+            last_frame_time: now,
             delta_time: 0.0,
-            frame_count: 0,
-            fps: 0.0,
-            fps_time_accumulator: 0.0,
-            fps_frame_accumulator: 0,
-            fixed_delta: None,
+            total_time: 0.0,
+            last_tick_time: now,
+            tick_interval: 0.016, // 約60FPS
+            paused: false,
         }
     }
 }
@@ -52,56 +46,92 @@ impl TimeResource {
         Self::default()
     }
     
+    /// ゲームを開始
+    pub fn start_game(&mut self) {
+        self.start_time = Some(Instant::now());
+        self.total_time = 0.0;
+        self.paused = false;
+    }
+    
+    /// ゲームをリセット
+    pub fn reset(&mut self) {
+        self.start_time = Some(Instant::now());
+        self.total_time = 0.0;
+        self.delta_time = 0.0;
+        self.paused = false;
+    }
+    
+    /// ポーズ状態をトグル
+    pub fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+    }
+    
     /// 時間を更新
     pub fn update(&mut self) {
-        self.previous_time = self.current_time;
-        self.current_time = Instant::now();
+        let now = Instant::now();
         
-        // デルタタイムを計算（秒単位）
-        let delta = self.current_time.duration_since(self.previous_time);
-        self.delta_time = delta.as_secs_f64();
-        
-        // 固定デルタタイムがある場合はそれを使用
-        if let Some(fixed) = self.fixed_delta {
-            self.delta_time = fixed;
+        // ポーズ中は時間を進めない
+        if !self.paused {
+            self.delta_time = (now - self.last_frame_time).as_secs_f64();
+            self.total_time += self.delta_time;
+        } else {
+            self.delta_time = 0.0;
         }
         
-        // フレームカウントを更新
-        self.frame_count += 1;
+        self.last_frame_time = now;
+    }
+    
+    /// ティックが必要かどうか判定
+    pub fn should_tick(&mut self) -> bool {
+        if self.paused {
+            return false;
+        }
         
-        // FPS計算（1秒ごとに更新）
-        self.fps_time_accumulator += self.delta_time;
-        self.fps_frame_accumulator += 1;
+        let now = Instant::now();
+        let elapsed = (now - self.last_tick_time).as_secs_f64();
         
-        if self.fps_time_accumulator >= 1.0 {
-            self.fps = self.fps_frame_accumulator as f64 / self.fps_time_accumulator;
-            self.fps_time_accumulator = 0.0;
-            self.fps_frame_accumulator = 0;
+        if elapsed >= self.tick_interval {
+            self.last_tick_time = now;
+            return true;
+        }
+        
+        false
+    }
+    
+    /// ゲーム開始からの経過時間を取得
+    pub fn elapsed(&self) -> Duration {
+        if let Some(start) = self.start_time {
+            Instant::now().duration_since(start)
+        } else {
+            Duration::from_secs(0)
         }
     }
     
-    /// ゲームが実行時間を取得（秒）
-    pub fn total_time(&self) -> f64 {
-        self.current_time.duration_since(self.previous_time).as_secs_f64()
+    /// 経過時間を文字列で取得（MM:SS形式）
+    pub fn elapsed_str(&self) -> String {
+        let secs = self.elapsed().as_secs();
+        let minutes = secs / 60;
+        let seconds = secs % 60;
+        
+        format!("{:02}:{:02}", minutes, seconds)
     }
     
-    /// 固定されたデルタタイムを取得（フレームレート平滑化用）
-    pub fn fixed_delta_time(&self, max_delta: f64) -> f64 {
-        self.delta_time.min(max_delta)
+    /// ティック間隔を設定（秒）
+    pub fn set_tick_interval(&mut self, interval: f64) {
+        self.tick_interval = interval;
     }
     
-    /// 合計の経過時間をDurationとして取得
-    pub fn duration(&self) -> Duration {
-        self.current_time.duration_since(self.previous_time)
+    /// デルタタイムを取得
+    pub fn get_delta_time(&self) -> f64 {
+        self.delta_time
     }
     
-    /// 固定デルタタイムを設定
-    pub fn set_fixed_delta(&mut self, delta: Option<f64>) {
-        self.fixed_delta = delta;
-    }
-    
-    /// フレームの開始処理（互換性のため）
-    pub fn begin_frame(&mut self) {
-        self.update();
+    /// 現在のFPSを計算して取得
+    pub fn get_fps(&self) -> f64 {
+        if self.delta_time > 0.0 {
+            1.0 / self.delta_time
+        } else {
+            0.0 // ゼロ除算を避ける
+        }
     }
 } 

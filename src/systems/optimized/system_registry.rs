@@ -452,7 +452,15 @@ impl SystemRegistry {
     pub fn init_core_resources(&mut self) {
         self.add_resource(TimeResource::new());
         self.add_resource(GameStateResource::new());
-        self.add_resource(PlayerStateResource::new());
+        self.add_resource(PlayerStateResource::new("Player"));
+    }
+    
+    /// プレイヤーステートリソースを初期化
+    pub fn init_player_state(&mut self) {
+        if !self.has_resource::<PlayerStateResource>() {
+            let player_state = PlayerStateResource::new("Player");
+            self.add_resource(player_state);
+        }
     }
     
     /// デバッグ情報を出力

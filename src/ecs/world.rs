@@ -13,7 +13,6 @@ use std::any::TypeId;
 use crate::components::Component;
 use crate::resources::Resource;
 use crate::resources::{
-    CoreGameResource, 
     GameStateResource, 
     GameConfigResource,
     BoardConfigResource,
@@ -30,6 +29,8 @@ use crate::resources::{
 };
 use std::collections::HashMap;
 use crate::system::system_registry::{SystemId, SystemPhase};
+use crate::resources::InputResource;
+use crate::resources::RenderResource;
 
 /// World構造体 - ECSの中心的なコンテナ
 #[derive(Debug)]
@@ -155,17 +156,18 @@ impl World {
     /// 初期リソースを追加
     pub fn setup_default_resources(&mut self) {
         use crate::resources::{
-            CoreGameResource, 
+            GameStateResource,
             TimeResource, 
             PlayerStateResource, 
             GameConfigResource,
             BoardConfigResource,
-            BoardStateResource
+            BoardStateResource,
+            EventQueueResource
         };
         
-        // コアゲームリソース
-        if !self.has_resource::<CoreGameResource>() {
-            self.insert_resource(CoreGameResource::new());
+        // コアゲームリソース → GameStateResourceに置き換え
+        if !self.has_resource::<GameStateResource>() {
+            self.insert_resource(GameStateResource::new());
         }
         
         // 時間リソース
@@ -173,9 +175,9 @@ impl World {
             self.insert_resource(TimeResource::new());
         }
         
-        // プレイヤー状態リソース
+        // 基本リソースを登録
         if !self.has_resource::<PlayerStateResource>() {
-            self.insert_resource(PlayerStateResource::new());
+            self.insert_resource(PlayerStateResource::new("Player"));
         }
         
         // ゲーム設定リソース
@@ -188,17 +190,20 @@ impl World {
             self.insert_resource(BoardConfigResource::default());
         }
         
-        // ボード状態リソース
+        // ボード関連リソースを登録
         if !self.has_resource::<BoardStateResource>() {
-            // デフォルトのBoardConfigを使用
-            let config = crate::resources::board_state::BoardConfig {
-                width: 16,
-                height: 16,
-                mine_count: 40,
-                cell_size: 30,
-            };
-            self.insert_resource(BoardStateResource::new(config));
+            self.insert_resource(BoardStateResource::new());
         }
+        
+        // イベントキューリソース
+        if !self.has_resource::<EventQueueResource>() {
+            self.insert_resource(EventQueueResource::new());
+        }
+        
+        self.insert_resource(RenderResource::default());
+        self.insert_resource(GameConfigResource::default());
+        self.insert_resource(InputResource::default());
+        self.insert_resource(GameConfigResource::default());
     }
     
     /// システムを追加

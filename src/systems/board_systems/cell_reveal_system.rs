@@ -30,6 +30,8 @@ use crate::resources::{
     GameStateResource,
 };
 use crate::resources::BoardConfig;
+use crate::board::Board;
+use crate::utils::get_adjacent_offsets;
 
 /// セル公開システム - セルを公開する処理を担当
 pub fn cell_reveal_system(
@@ -46,47 +48,83 @@ pub fn reveal_cell(
     row: usize,
     col: usize,
     entity_manager: &mut EntityManager,
-    board_state: &mut BoardResource,
-    board_config: &BoardConfig,
+    board: &mut Board,
+    is_first_click: bool
 ) -> Result<bool, JsValue> {
-    // ゲームが終了している条件をcheck_win_conditionの結果で判断
-    if board_state.check_win_condition() {
+    // ゲームオーバーや勝利状態では何もしない
+    if board.game_over || board.win {
         return Ok(false);
     }
+
+    // インデックスを計算
+    let index = row * board.width + col;
     
-    // 座標が有効かチェック
-    let width = board_config.width;
-    if row >= board_config.height || col >= width {
+    // 既に開いているセルや旗が立てられているセルは無視
+    if board.revealed[index] || board.flagged[index] {
         return Ok(false);
     }
-    
-    // セルのインデックスを計算
-    let cell_index = row * width + col;
-    
-    // すでに公開済み、またはフラグが立っている場合は何もしない
-    if board_state.cells[cell_index].is_revealed() || board_state.cells[cell_index].is_flagged() {
-        return Ok(false);
+
+    // 最初のクリックの場合、地雷を再配置
+    if is_first_click {
+        // 最初のクリックでは地雷に当たらないようにする
+        board.initialize();
+        board.first_click = false;
     }
-    
-    // 最初のクリックの場合
-    if board_state.first_click {
-        // ボードを初期化（地雷配置）
-        board_state.initialize(cell_index);
+
+    // セルを開く
+    board.revealed[index] = true;
+
+    // 地雷をクリックした場合
+    if let CellValue::Mine = board.cells[index] {
+        // ゲームオーバー
+        board.game_over = true;
+        board.reveal_all_mines();
+        return Ok(true); // 爆発を示すtrueを返す
     }
-    
-    // セルを公開
-    let exploded = board_state.reveal_cell(cell_index);
-    
-    if exploded {
-        // 地雷を踏んだ場合はすべての地雷を表示
-        board_state.reveal_all_mines();
-        return Ok(true);
+
+    // 残りの安全なセル数を減らす
+    board.remaining_safe_cells -= 1;
+
+    // 周囲の地雷がない場合は周囲のセルも開く
+    if let CellValue::Empty(0) = board.cells[index] {
+        // 周囲のセルを再帰的に開く
+        let adjacents = get_adjacent_cells(row, col, board.width, board.height);
+        for (adj_row, adj_col) in adjacents {
+            reveal_cell(adj_row, adj_col, entity_manager, board, false)?;
+        }
     }
-    
+
     // 勝利条件をチェック
-    let is_win = board_state.check_win_condition();
+    if check_win_condition(board) {
+        board.win = true;
+        board.reveal_all_mines();
+    }
+
+    Ok(false) // 爆発しなかったのでfalseを返す
+}
+
+pub fn check_win_condition(board: &mut Board) -> bool {
+    // 全ての安全なセルが開かれているかチェック
+    board.check_win_condition()
+}
+
+/// 指定したセルの周囲8方向のセル座標を取得
+fn get_adjacent_cells(row: usize, col: usize, width: usize, height: usize) -> Vec<(usize, usize)> {
+    let mut adjacent_cells = Vec::new();
     
-    Ok(true)
+    // 周囲8方向の座標オフセットを取得
+    for (dr, dc) in get_adjacent_offsets().iter() {
+        let new_row = row as isize + dr;
+        let new_col = col as isize + dc;
+        
+        // 範囲内の座標のみを追加
+        if new_row >= 0 && new_row < height as isize &&
+           new_col >= 0 && new_col < width as isize {
+            adjacent_cells.push((new_row as usize, new_col as usize));
+        }
+    }
+    
+    adjacent_cells
 }
 
 /**
@@ -122,34 +160,29 @@ impl System for CellRevealSystem {
                 board_state_ref.downcast_ref::<BoardResource>(),
                 player_state_ref.downcast_ref::<PlayerStateResource>()
             ) {
-                // ゲームが終了している場合は何もしない
-                if board.check_win_condition() {
-                    return SystemResult::Ok;
-                }
-                
                 // マウスが左クリックされた時だけ処理
                 if player.mouse_state.get_state() != MouseState::LeftDown {
                     return SystemResult::Ok;
                 }
                 
                 // マウス座標からセルの位置を計算
-                let cell_size = board.config.cell_size as f64;
+                let cell_size = board.cell_size as f64;
                 let col = (player.mouse_state.x as f64 / cell_size) as usize;
                 let row = (player.mouse_state.y as f64 / cell_size) as usize;
                 
                 // 範囲外チェック
-                if row >= board.config.height || col >= board.config.width {
+                if row >= board.height || col >= board.width {
                     return SystemResult::Ok;
                 }
                 
                 // 可変参照を取得して処理
                 if let Ok(board_state_mut) = resources.get_mut::<BoardResource>() {
                     if let Some(mut board_mut) = board_state_mut.borrow_mut().downcast_mut::<BoardResource>() {
-                        // configを事前にコピー
-                        let config = board_mut.config.clone();
+                        // 最初のクリックかどうかを取得
+                        let first_click = board_mut.first_click;
                         
                         // セルを公開
-                        match reveal_cell(row, col, entity_manager, &mut board_mut, &config) {
+                        match reveal_cell(row, col, entity_manager, board_mut, first_click) {
                             Ok(_) => (),
                             Err(_) => return SystemResult::Error,
                         }

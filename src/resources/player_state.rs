@@ -1,11 +1,10 @@
 /**
  * プレイヤー状態リソース
  * 
- * 現在のプレイヤーの状態を管理する
+ * プレイヤーの状態（位置、クリック状態など）を管理するリソース
  */
-use std::any::Any;
 use super::resource_trait::Resource;
-use crate::resources::MouseState;
+use crate::resources::mouse_state::MouseState;
 
 /// プレイヤーの状態を表すリソース
 ///
@@ -13,22 +12,16 @@ use crate::resources::MouseState;
 /// 以前のローカルプレイヤーと他プレイヤー情報の管理を置き換えるものです。
 #[derive(Debug, Clone)]
 pub struct PlayerStateResource {
-    /// プレイヤーID
-    pub player_id: String,
     /// プレイヤー名
-    pub player_name: String,
-    /// スコア
-    pub score: u32,
-    /// マルチプレイヤーモードかどうか
-    pub is_multiplayer: bool,
-    /// ホストかどうか
-    pub is_host: bool,
-    /// 参加済みかどうか
-    pub has_joined: bool,
-    /// マウスの状態（互換性のため）
+    pub name: String,
+    /// プレイヤーID（ネットワークプレイ用）
+    pub id: Option<String>,
+    /// マウス状態
     pub mouse_state: MouseState,
-    /// 他のプレイヤー情報（互換性のため）
-    pub other_players: Vec<Player>,
+    /// プレイヤーの色
+    pub color: String,
+    /// 最後にクリックした位置（行、列）
+    pub last_click: Option<(usize, usize)>,
 }
 
 /// プレイヤー情報
@@ -47,149 +40,149 @@ pub struct Player {
 impl Default for PlayerStateResource {
     fn default() -> Self {
         Self {
-            player_id: "local".to_string(),
-            player_name: "Player".to_string(),
-            score: 0,
-            is_multiplayer: false,
-            is_host: false,
-            has_joined: false,
+            name: "Player".to_string(),
+            id: None,
             mouse_state: MouseState::default(),
-            other_players: Vec::new(),
+            color: "#3498db".to_string(),
+            last_click: None,
         }
     }
 }
 
 impl PlayerStateResource {
     /// 新しいプレイヤー状態を作成
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            id: None,
+            mouse_state: MouseState::default(),
+            color: "#3498db".to_string(),
+            last_click: None,
+        }
+    }
+    
+    /// マウス位置を更新
+    pub fn update_mouse_position(&mut self, x: f64, y: f64) {
+        self.mouse_state.x = x;
+        self.mouse_state.y = y;
+    }
+    
+    /// マウスボタンの状態を更新
+    pub fn update_mouse_button(&mut self, button: u16, pressed: bool) {
+        match button {
+            0 => self.mouse_state.left_button = pressed,
+            2 => self.mouse_state.right_button = pressed,
+            _ => {}
+        }
+    }
+    
+    /// クリック位置を記録
+    pub fn set_last_click(&mut self, row: usize, col: usize) {
+        self.last_click = Some((row, col));
+    }
+    
+    /// ネットワークIDを設定
+    pub fn set_network_id(&mut self, id: String) {
+        self.id = Some(id);
     }
     
     /// プレイヤーIDを設定
     pub fn set_player_id(&mut self, id: String) {
-        self.player_id = id;
+        self.id = Some(id);
     }
     
     /// プレイヤー名を設定
     pub fn set_player_name(&mut self, name: String) {
-        self.player_name = name;
-    }
-    
-    /// スコアを追加
-    pub fn add_score(&mut self, points: u32) {
-        self.score += points;
-    }
-    
-    /// スコアをリセット
-    pub fn reset_score(&mut self) {
-        self.score = 0;
+        self.name = name;
     }
     
     /// マルチプレイヤーモードを設定
     pub fn set_multiplayer(&mut self, is_multiplayer: bool) {
-        self.is_multiplayer = is_multiplayer;
+        // このリソースはマルチプレイヤーを考慮していないため、このメソッドは実装されていません。
     }
     
     /// ホスト状態を設定
     pub fn set_host(&mut self, is_host: bool) {
-        self.is_host = is_host;
+        // このリソースはマルチプレイヤーを考慮していないため、このメソッドは実装されていません。
     }
     
     /// 参加状態を設定
     pub fn set_joined(&mut self, has_joined: bool) {
-        self.has_joined = has_joined;
+        // このリソースはマルチプレイヤーを考慮していないため、このメソッドは実装されていません。
     }
     
     // 以下は互換性のためのメソッド
     
     /// ローカルプレイヤーIDを設定（互換性のため）
     pub fn set_local_player_id(&mut self, id: String) {
-        self.player_id = id;
+        self.id = Some(id);
     }
     
     /// プレイヤーが存在するかチェック（互換性のため）
     pub fn has_player(&self, id: &str) -> bool {
-        if id == &self.player_id {
-            return true;
-        }
-        self.other_players.iter().any(|p| p.id == id)
+        self.id.as_ref().map_or(false, |i| i == id)
     }
     
     /// プレイヤーを追加（互換性のため）
     pub fn add_player(&mut self, id: String, x: f64, y: f64, color: String) {
         // 自分自身のIDなら自身を更新
-        if id == self.player_id {
+        if id == *self.id.as_ref().unwrap_or(&"local".to_string()) {
             return;
         }
         
         // 既に存在するなら更新
-        for player in &mut self.other_players {
-            if player.id == id {
-                player.x = x;
-                player.y = y;
-                player.color = color;
-                return;
-            }
-        }
-        
-        // 新規追加
-        self.other_players.push(Player {
-            id,
-            x,
-            y,
-            color,
-        });
+        self.id = Some(id);
+        self.mouse_state.x = x;
+        self.mouse_state.y = y;
+        self.color = color;
     }
     
     /// プレイヤーを削除（互換性のため）
-    pub fn remove_player(&mut self, id: &str) {
-        self.other_players.retain(|p| p.id != id);
+    pub fn remove_player(&mut self) {
+        self.id = None;
     }
     
     /// プレイヤーの位置を更新（互換性のため）
-    pub fn update_player_position(&mut self, id: &str, x: f64, y: f64) {
-        if id == "local" || id == &self.player_id {
-            // ローカルプレイヤーの場合はマウス位置も更新
-            self.mouse_state.update_position(x, y);
-            return;
-        }
-        
-        // 他プレイヤーの場合
-        for player in &mut self.other_players {
-            if player.id == id {
-                player.x = x;
-                player.y = y;
-                return;
-            }
-        }
+    pub fn update_player_position(&mut self, x: f64, y: f64) {
+        self.mouse_state.x = x;
+        self.mouse_state.y = y;
     }
     
     /// マウスの状態を設定（互換性のため）
     pub fn set_mouse_state(&mut self, state: &str) {
         if state == MouseState::LeftDown {
-            self.mouse_state.update_buttons(true, false, false);
+            self.mouse_state.left_button = true;
         } else if state == MouseState::RightDown {
-            self.mouse_state.update_buttons(false, true, false);
+            self.mouse_state.right_button = true;
         } else if state == MouseState::MiddleDown {
-            self.mouse_state.update_buttons(false, false, true);
+            self.mouse_state.middle_button = true;
         } else {
             // Up状態の場合はすべてのボタンを解放
-            self.mouse_state.update_buttons(false, false, false);
+            self.mouse_state.left_button = false;
+            self.mouse_state.right_button = false;
+            self.mouse_state.middle_button = false;
         }
     }
     
     /// すべてのプレイヤーを取得（互換性のため）
-    pub fn all_players(&self) -> Vec<&Player> {
-        self.other_players.iter().collect()
+    pub fn all_players(&self) -> Vec<Player> {
+        // Playerインスタンスを作成して所有権ごと返す
+                let player = Player {
+            id: self.id.as_ref().unwrap_or(&"local".to_string()).clone(),
+            x: self.mouse_state.x,
+            y: self.mouse_state.y,
+            color: self.color.clone(),
+        };
+        vec![player]
     }
     
     /// ローカルプレイヤーを取得（互換性のため）
     pub fn local_player(&self) -> Option<Player> {
         Some(Player {
-            id: self.player_id.clone(),
+            id: self.id.as_ref().unwrap_or(&"local".to_string()).clone(),
             x: self.mouse_state.x,
             y: self.mouse_state.y,
-            color: "red".to_string(),
+            color: self.color.clone(),
         })
     }
 } 

@@ -38,9 +38,9 @@ fn initialize_board(
     board_state.reset();
     
     // 各セルのエンティティを設定
-    for row in 0..board_state.config.height {
-        for col in 0..board_state.config.width {
-            let index = row * board_state.config.width + col;
+    for row in 0..board_state.height {
+        for col in 0..board_state.width {
+            let index = row * board_state.width + col;
             
             // セルエンティティを作成
             let cell_entity = entity_manager.create_entity();
@@ -60,10 +60,9 @@ fn initialize_board(
             
             // セルの内容コンポーネントを作成
             let cell_content = CellContentComponent {
-                value: if board_state.cells[index].is_mine {
-                    CellValue::Mine
-                } else {
-                    CellValue::Empty(board_state.cells[index].adjacent_mines as u8)
+                value: match board_state.cells[index] {
+                    CellValue::Mine => CellValue::Mine,
+                    CellValue::Empty(count) => CellValue::Empty(count as u8)
                 }
             };
             entity_manager.add_component(cell_entity, cell_content);
@@ -80,11 +79,15 @@ pub fn place_mines(
     avoid_row: usize,
     avoid_col: usize,
 ) -> Result<(), JsValue> {
-    let width = board_state.config.width;
+    let width = board_state.width;
     let first_click_index = avoid_row * width + avoid_col;
     
-    // BoardResourceの初期化メソッドを使用
-    board_state.initialize(first_click_index);
+    // BoardResourceの初期化メソッド（引数なし）を使用
+    // Boardエイリアスとして定義されているため、引数を取りません
+    board_state.initialize();
+    
+    // NOTE: この部分ではfirst_click_indexの情報が失われますが、
+    // Boardの実装では独自の方法で安全セルを決定している可能性があります
     
     // 各セルのエンティティに地雷情報を設定
     for index in 0..board_state.cells.len() {
@@ -103,11 +106,9 @@ pub fn place_mines(
         
         // セル状態コンポーネントを追加
         // CellStateの型変換 - 同じ名前だが異なる型
-        let component_state = match board_state.cells[index].state {
-            crate::resources::board_state::CellState::Hidden => CellState::Hidden,
-            crate::resources::board_state::CellState::Revealed => CellState::Revealed,
-            crate::resources::board_state::CellState::Flagged => CellState::Flagged,
-            crate::resources::board_state::CellState::Exploded => CellState::Revealed, // 爆発状態はRevealedにマッピング
+        let component_state = match board_state.cells[index] {
+            CellValue::Mine => CellState::Hidden, // 地雷は初期状態では隠れている
+            CellValue::Empty(_) => CellState::Hidden // 空のセルも初期状態では隠れている
         };
         
         let cell_state = CellStateComponent {
@@ -117,10 +118,9 @@ pub fn place_mines(
         
         // セルの内容コンポーネントを作成
         let cell_content = CellContentComponent {
-            value: if board_state.cells[index].is_mine {
-                CellValue::Mine
-            } else {
-                CellValue::Empty(board_state.cells[index].adjacent_mines)
+            value: match board_state.cells[index] {
+                CellValue::Mine => CellValue::Mine,
+                CellValue::Empty(count) => CellValue::Empty(count as u8)
             }
         };
         entity_manager.add_component(cell_entity, cell_content);

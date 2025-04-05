@@ -14,6 +14,7 @@ use crate::resources::{BoardResource, CellState};
 use crate::resources::{GameStateResource, GamePhase};
 use crate::resources::PlayerStateResource;
 use crate::resources::TimeResource;
+use crate::models::CellValue;
 
 // 色の定義
 const COLOR_BACKGROUND: &str = "#f0f0f0";
@@ -72,52 +73,55 @@ pub fn render_system(resources: &[Rc<RefCell<dyn Any>>]) {
         let game = game_rc_option.unwrap().borrow();
         let game = game.downcast_ref::<GameStateResource>().unwrap();
         
-        // キャンバスをクリア
-        clear_canvas(&context, render);
-        
-        // ゲームフェーズに応じたレンダリング
-        match &game.phase {
-            GamePhase::StartScreen => render_start_screen(&context, render),
-            GamePhase::Loading => render_loading_screen(&context, render),
-            GamePhase::Playing => {
-                // ゲームボードとUIをレンダリング
-                if let Some(board_rc) = board_rc_option {
-                    let board = board_rc.borrow();
-                    let board = board.downcast_ref::<BoardResource>().unwrap();
-                    render_game_board(&context, render, board);
-                    
-                    // ゲームUIをレンダリング
-                    if let Some(time_rc) = time_rc_option {
-                        if let Some(player_rc) = player_rc_option {
-                            let time = time_rc.borrow();
-                            let time = time.downcast_ref::<TimeResource>().unwrap();
-                            
-                            let player = player_rc.borrow();
-                            let player = player.downcast_ref::<PlayerStateResource>().unwrap();
-                            
-                            render_game_ui(&context, render, board, game, player, time);
+        // コンテキストが存在する場合のみレンダリングを行う
+        if let Some(context) = context {
+            // キャンバスをクリア
+            clear_canvas(context, render);
+            
+            // ゲームフェーズに応じたレンダリング
+            match &game.phase {
+                GamePhase::StartScreen => render_start_screen(context, render),
+                GamePhase::Loading => render_loading_screen(context, render),
+                GamePhase::Playing => {
+                    // ゲームボードとUIをレンダリング
+                    if let Some(board_rc) = board_rc_option {
+                        let board = board_rc.borrow();
+                        let board = board.downcast_ref::<BoardResource>().unwrap();
+                        render_game_board(context, render, board);
+                        
+                        // ゲームUIをレンダリング
+                        if let Some(time_rc) = time_rc_option {
+                            if let Some(player_rc) = player_rc_option {
+                                let time = time_rc.borrow();
+                                let time = time.downcast_ref::<TimeResource>().unwrap();
+                                
+                                let player = player_rc.borrow();
+                                let player = player.downcast_ref::<PlayerStateResource>().unwrap();
+                                
+                                render_game_ui(context, render, board, game, player, time);
+                            }
                         }
                     }
-                }
-            },
-            GamePhase::Paused => {
-                // ゲームボードとポーズ画面をレンダリング
-                if let Some(board_rc) = board_rc_option {
-                    let board = board_rc.borrow();
-                    let board = board.downcast_ref::<BoardResource>().unwrap();
-                    render_game_board(&context, render, board);
-                    render_pause_screen(&context, render);
-                }
-            },
-            GamePhase::GameOver { win, score, time } => {
-                // ゲームボードとゲームオーバー画面をレンダリング
-                if let Some(board_rc) = board_rc_option {
-                    let board = board_rc.borrow();
-                    let board = board.downcast_ref::<BoardResource>().unwrap();
-                    render_game_board(&context, render, board);
-                    render_game_over_screen(&context, render, *win, *score, *time);
-                }
-            },
+                },
+                GamePhase::Paused => {
+                    // ゲームボードとポーズ画面をレンダリング
+                    if let Some(board_rc) = board_rc_option {
+                        let board = board_rc.borrow();
+                        let board = board.downcast_ref::<BoardResource>().unwrap();
+                        render_game_board(context, render, board);
+                        render_pause_screen(context, render);
+                    }
+                },
+                GamePhase::GameOver { win, score, time } => {
+                    // ゲームボードとゲームオーバー画面をレンダリング
+                    if let Some(board_rc) = board_rc_option {
+                        let board = board_rc.borrow();
+                        let board = board.downcast_ref::<BoardResource>().unwrap();
+                        render_game_board(context, render, board);
+                        render_game_over_screen(context, render, *win, *score, *time);
+                    }
+                },
+            }
         }
     }
 }
@@ -169,14 +173,17 @@ fn render_loading_screen(context: &CanvasRenderingContext2d, render: &RenderReso
 
 /// ゲームボードをレンダリング
 fn render_game_board(context: &CanvasRenderingContext2d, render: &RenderResource, board: &BoardResource) {
-    let cell_size = board.config.cell_size as f64;
-    let board_width = board.config.width;
-    let board_height = board.config.height;
+                let cell_size = board.cell_size;
+    let board_width = board.width;
+    let board_height = board.height;
     
-    // ボードの中央配置のためのオフセット計算
     let (canvas_width, canvas_height) = render.get_canvas_size();
-    let offset_x = ((canvas_width as usize - board.config.board_width_px()) / 2) as f64;
-    let offset_y = ((canvas_height as usize - board.config.board_height_px()) / 2) as f64;
+    let board_width_px = board.width as f64 * cell_size;
+    let board_height_px = board.height as f64 * cell_size;
+
+    // キャンバス中央に描画するためのオフセットを計算
+    let offset_x = (canvas_width as f64 - board_width_px) / 2.0;
+    let offset_y = (canvas_height as f64 - board_height_px) / 2.0;
     
     // グリッドの描画
     context.set_stroke_style(&COLOR_GRID.into());
@@ -192,19 +199,16 @@ fn render_game_board(context: &CanvasRenderingContext2d, render: &RenderResource
             let cell_y = offset_y + (y as f64 * cell_size);
             
             // セルの背景色を設定
-            match cell.state {
-                CellState::Hidden => {
-                    context.set_fill_style(&COLOR_HIDDEN.into());
-                },
-                CellState::Revealed => {
-                    context.set_fill_style(&COLOR_REVEALED.into());
-                },
-                CellState::Flagged => {
-                    context.set_fill_style(&COLOR_HIDDEN.into());
-                },
-                CellState::Exploded => {
+            if board.revealed[index] {
+                if matches!(cell, CellValue::Mine) {
                     context.set_fill_style(&COLOR_MINE.into());
-                },
+                } else {
+                    context.set_fill_style(&COLOR_REVEALED.into());
+                }
+            } else if board.flagged[index] {
+                context.set_fill_style(&COLOR_HIDDEN.into());
+                        } else {
+                context.set_fill_style(&COLOR_HIDDEN.into());
             }
             
             // セルを描画
@@ -212,37 +216,37 @@ fn render_game_board(context: &CanvasRenderingContext2d, render: &RenderResource
             context.stroke_rect(cell_x, cell_y, cell_size, cell_size);
             
             // セルの内容を描画
-            match cell.state {
-                CellState::Revealed => {
-                    if !cell.is_mine && cell.adjacent_mines > 0 {
+            if board.revealed[index] {
+                // 空のセルで周囲に地雷がある場合、数字を表示
+                if let CellValue::Empty(adjacent_mines) = cell {
+                    if *adjacent_mines > 0 {
                         // 周囲の地雷数を表示
-                        let number_color = get_number_color(cell.adjacent_mines);
+                        let number_color = get_number_color(*adjacent_mines);
                         
                         context.set_font(FONT_TITLE);
-                        context.set_text_align("center");
-                        context.set_text_baseline("middle");
+                                context.set_text_align("center");
+                                context.set_text_baseline("middle");
                         context.set_fill_style(&number_color.into());
-                        
-                        context.fill_text(
-                            &cell.adjacent_mines.to_string(),
-                            cell_x + cell_size / 2.0,
-                            cell_y + cell_size / 2.0,
+                                
+                                context.fill_text(
+                            &adjacent_mines.to_string(),
+                                    cell_x + cell_size / 2.0,
+                                    cell_y + cell_size / 2.0,
                         ).unwrap();
                     }
-                },
-                CellState::Flagged => {
-                    // フラグを描画
-                    draw_flag(context, cell_x, cell_y, cell_size);
-                },
-                CellState::Exploded => {
-                    // 爆発した地雷を描画
+                }
+                
+                // 爆発した地雷の場合は赤い背景で描画
+                if board.game_over && matches!(cell, CellValue::Mine) {
                     draw_mine(context, cell_x, cell_y, cell_size, true);
-                },
-                _ => {}
+                }
+            } else if board.flagged[index] {
+                // フラグを描画
+                draw_flag(context, cell_x, cell_y, cell_size);
             }
             
             // 地雷を表示（ゲームオーバー時）
-            if cell.is_mine && cell.state == CellState::Revealed {
+            if matches!(cell, CellValue::Mine) && board.revealed[index] && !board.game_over {
                 draw_mine(context, cell_x, cell_y, cell_size, false);
             }
         }
@@ -271,7 +275,7 @@ fn render_game_ui(
     context.set_fill_style(&COLOR_TEXT.into());
     
     context.fill_text(
-        &format!("地雷: {}", board.remaining_mines),
+        &format!("地雷: {}", board.mine_count - board.flagged_count),
         20.0,
         20.0,
     ).unwrap();
@@ -291,7 +295,7 @@ fn render_game_ui(
     // プレイヤー情報とスコア（中央）
     context.set_text_align("center");
     context.fill_text(
-        &format!("プレイヤー: {} | スコア: {}", player.player_name, game.score),
+        &format!("プレイヤー: {} | スコア: {}", player.name, game.score),
         width as f64 / 2.0,
         20.0,
     ).unwrap();
@@ -348,8 +352,8 @@ fn render_game_over_screen(
     
     // ゲームオーバーテキスト
     context.set_font(FONT_LARGE);
-    context.set_text_align("center");
-    context.set_text_baseline("middle");
+                    context.set_text_align("center");
+                    context.set_text_baseline("middle");
     
     if win {
         context.set_fill_style(&"#00ff00".into());

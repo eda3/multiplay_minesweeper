@@ -10,7 +10,7 @@ use wasm_bindgen::JsValue;
 use serde::{Serialize, Deserialize};
 use web_sys::CanvasRenderingContext2d;
 use std::any::Any;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::{WebSocket, MessageEvent, CloseEvent};
 use web_sys::console;
 use serde_json::Value;
@@ -25,6 +25,7 @@ use crate::resources::{
 };
 use crate::components::{Position, player::Player};
 use crate::resources::Resource;
+use crate::resources::network_state::NetworkMessage as NetworkMessageEnum;
 
 /// ネットワークメッセージタイプ
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -69,10 +70,11 @@ static mut WEBSOCKET_INSTANCE: Option<WebSocket> = None;
 
 /// ネットワークシステム関数
 pub fn network_system(mut resources: &mut dyn Resource, _delta_time: f64) -> Result<(), JsValue> {
+    // ネットワーク再接続のための静的変数
+    static mut CONNECT_ATTEMPTS: u32 = 0;
+    
     // 各リソースから必要な情報を個別に抽出
     let needs_connection;
-    let should_reconnect;
-    let connect_attempts;
     let is_multiplayer;
     
     // 一時的なスコープで情報を取得
@@ -82,10 +84,7 @@ pub fn network_system(mut resources: &mut dyn Resource, _delta_time: f64) -> Res
             panic!("NetworkResource not found");
         });
         
-        connect_attempts = network.connect_attempts;
-        should_reconnect = network.should_reconnect();
-        
-        let is_connected = network.is_connected;
+        let is_connected = network.connected;
         
         // PlayerStateResourceから情報を取得 - 別のスコープで
         {
@@ -94,7 +93,8 @@ pub fn network_system(mut resources: &mut dyn Resource, _delta_time: f64) -> Res
                 panic!("PlayerStateResource not found");
             });
             
-            is_multiplayer = player.is_multiplayer;
+            // プレイヤーが参加しているかどうかでマルチプレイヤーモードか判断
+            is_multiplayer = player.id.is_some();
         }
         
         needs_connection = is_multiplayer && !is_connected;
@@ -102,79 +102,60 @@ pub fn network_system(mut resources: &mut dyn Resource, _delta_time: f64) -> Res
     
     // 接続が必要な場合
     if needs_connection {
-        if connect_attempts == 0 {
-            web_sys::console::log_1(&JsValue::from_str("接続を試みます"));
-            
-            // NetworkResourceの更新
-            {
-                let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
-                    crate::js_bindings::log("NetworkResource not found");
-                    panic!("NetworkResource not found");
-                });
+        unsafe {
+            if CONNECT_ATTEMPTS == 0 {
+                web_sys::console::log_1(&JsValue::from_str("接続を試みます"));
                 
-                network.connect_attempts += 1;
-            }
-            
-            // WebSocket接続を試みる
-            match setup_websocket() {
-                Ok(ws) => {
-                    // NetworkResourceを更新
-                    let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
-                        crate::js_bindings::log("NetworkResource not found");
-                        panic!("NetworkResource not found");
-                    });
-                    
-                    // 接続状態をtrueに設定
-                    network.set_connected(true);
-                    
-                    // WebSocketインスタンスを保存
-                    unsafe {
-                        WEBSOCKET_INSTANCE = Some(ws);
-                    }
-                },
-                Err(e) => {
-                    web_sys::console::error_1(&JsValue::from_str(&format!("WebSocket接続エラー: {:?}", e)));
-                    
-                    let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
-                        crate::js_bindings::log("NetworkResource not found");
-                        panic!("NetworkResource not found");
-                    });
-                    
-                    network.is_connected = false;
-                },
-            }
-        } else if should_reconnect {
-            web_sys::console::log_1(&JsValue::from_str("再接続を試みます"));
-            
-            // NetworkResourceの更新
-            {
-                let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
-                    crate::js_bindings::log("NetworkResource not found");
-                    panic!("NetworkResource not found");
-                });
+                // 接続試行回数を増やす
+                CONNECT_ATTEMPTS += 1;
                 
-                network.connect_attempts = 0;
-            }
-            
-            // WebSocket再接続
-            match setup_websocket() {
-                Ok(ws) => {
-                    let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
-                        crate::js_bindings::log("NetworkResource not found");
-                        panic!("NetworkResource not found");
-                    });
-                    
-                    // 接続状態をtrueに設定
-                    network.set_connected(true);
-                    
-                    // WebSocketインスタンスを保存
-                    unsafe {
+                // WebSocket接続を試みる
+                match setup_websocket() {
+                    Ok(ws) => {
+                        // NetworkResourceを更新
+                        let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+                            crate::js_bindings::log("NetworkResource not found");
+                            panic!("NetworkResource not found");
+                        });
+                        
+                        // 接続状態をtrueに設定
+                        network.connected = true;
+                        
+                        // WebSocketインスタンスを保存
                         WEBSOCKET_INSTANCE = Some(ws);
-                    }
-                },
-                Err(e) => {
-                    web_sys::console::error_1(&JsValue::from_str(&format!("WebSocket再接続エラー: {:?}", e)));
-                },
+                    },
+                    Err(e) => {
+                        web_sys::console::error_1(&JsValue::from_str(&format!("WebSocket接続エラー: {:?}", e)));
+                        
+                        let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+                            crate::js_bindings::log("NetworkResource not found");
+                            panic!("NetworkResource not found");
+                        });
+                        
+                        network.connected = false;
+                    },
+                }
+            } else {
+                web_sys::console::log_1(&JsValue::from_str("再接続を試みます"));
+                
+                // WebSocket再接続
+                match setup_websocket() {
+                    Ok(ws) => {
+                        let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+                            crate::js_bindings::log("NetworkResource not found");
+                            panic!("NetworkResource not found");
+                        });
+                        
+                        // 接続状態をtrueに設定
+                        network.connected = true;
+                        
+                        // WebSocketインスタンスを保存
+                        WEBSOCKET_INSTANCE = Some(ws);
+                    },
+                    Err(e) => {
+                        web_sys::console::error_1(&JsValue::from_str(&format!("WebSocket再接続エラー: {:?}", e)));
+                    },
+                }
             }
         }
     }
@@ -240,8 +221,23 @@ fn setup_event_handlers(
             "#,
         );
         
-        // ハンドラを設定
-        network.setup_event_handlers(&ws, on_message, on_open, on_close, on_error);
+        // WebSocketにハンドラを直接設定
+        let on_message_ref: &JsValue = on_message.as_ref();
+        let on_open_ref: &JsValue = on_open.as_ref();
+        let on_close_ref: &JsValue = on_close.as_ref();
+        let on_error_ref: &JsValue = on_error.as_ref();
+        
+        ws.set_onmessage(Some(on_message_ref.unchecked_ref::<js_sys::Function>()));
+        ws.set_onopen(Some(on_open_ref.unchecked_ref::<js_sys::Function>()));
+        ws.set_onclose(Some(on_close_ref.unchecked_ref::<js_sys::Function>()));
+        ws.set_onerror(Some(on_error_ref.unchecked_ref::<js_sys::Function>()));
+        
+        // NetworkResourceに接続したWebSocketを保存
+        if let Some(socket) = &mut network.socket {
+            *socket = ws.clone();
+        } else {
+            network.socket = Some(ws.clone());
+        }
         
         // JavaScript側にハンドラを設定
         let window = web_sys::window().unwrap();
@@ -306,7 +302,7 @@ fn setup_event_handlers(
         }
         
         // ネットワークの接続状態を更新
-        network.set_connected(true);
+        network.connected = true;
     }
     Ok(())
 }
@@ -320,8 +316,14 @@ fn process_message_queue(
     let messages = std::mem::take(&mut network.message_queue);
     
     for message in messages {
-        // メッセージを処理
-        process_message(network, player, board, &message);
+        // NetworkMessage::Raw の場合のみ処理
+        if let NetworkMessageEnum::Raw(text) = message {
+            // メッセージを処理
+            process_message(network, player, board, &text);
+        } else {
+            // 他のメッセージタイプは今のところ処理しない
+            web_sys::console::warn_1(&format!("未対応のメッセージタイプ: {:?}", message).into());
+        }
     }
 }
 
@@ -359,7 +361,7 @@ fn process_message(network: &NetworkResource, player: &mut PlayerStateResource, 
 fn handle_init_message(data: &js_sys::Object, player: &mut PlayerStateResource) {
     if let Some(player_id) = js_sys::Reflect::get(&data, &"playerId".into()).ok().and_then(|v| v.as_string()) {
         player.set_player_id(player_id);
-        player.has_joined = true;
+        player.set_joined(true);
     }
 }
 
@@ -430,7 +432,12 @@ fn handle_game_reset(data: &js_sys::Object, board: &mut BoardResource) {
                     height as usize,
                     mines as usize,
                 );
-                *board = BoardResource::new(config);
+                *board = BoardResource::new(
+                    config.width,
+                    config.height,
+                    config.mine_count,
+                    config.cell_size as f64
+                );
             }
         }
     }

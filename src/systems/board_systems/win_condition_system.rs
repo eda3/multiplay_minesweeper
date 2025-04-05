@@ -9,7 +9,8 @@ use crate::entities::{EntityManager, EntityId};
 use crate::resources::{
     BoardConfig,
     BoardResource,
-    CoreGameResource,
+    BoardStateResource,
+    GameStateResource,
     GamePhase,
     Resource
 };
@@ -61,9 +62,9 @@ impl System for WinConditionSystem {
         // 勝利条件を満たしたら
         if is_win {
             // CoreGameResourceを取得して勝利状態に設定
-            if let Ok(core_game) = resources.get_mut::<CoreGameResource>() {
+            if let Ok(core_game) = resources.get_mut::<GameStateResource>() {
                 // 可変参照を取得してダウンキャスト
-                if let Some(mut core_game) = core_game.borrow_mut().downcast_mut::<CoreGameResource>() {
+                if let Some(mut core_game) = core_game.borrow_mut().downcast_mut::<GameStateResource>() {
                     // 勝利フラグを設定
                     core_game.set_game_over(true);
                 }
@@ -100,8 +101,8 @@ pub fn win_condition_system(
             
             // 勝利なら、コアゲームを更新
             if is_win {
-                if let Ok(core_game) = resources.get_mut::<CoreGameResource>() {
-                    if let Some(mut game) = core_game.borrow_mut().downcast_mut::<CoreGameResource>() {
+                if let Ok(core_game) = resources.get_mut::<GameStateResource>() {
+                    if let Some(mut game) = core_game.borrow_mut().downcast_mut::<GameStateResource>() {
                         game.set_game_over(true);
                         // スコアと時間を設定
                         game.add_score(score);

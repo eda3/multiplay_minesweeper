@@ -10,6 +10,7 @@ use std::any::Any;
 use crate::resources::InputResource;
 use crate::resources::BoardResource;
 use crate::resources::{GameStateResource, GamePhase, DifficultyLevel};
+use crate::js_bindings::log;
 
 /// 入力システム関数
 pub fn input_system(resources: &[Rc<RefCell<dyn Any>>]) {
@@ -82,30 +83,47 @@ fn process_playing_input(input: &InputResource, board: &mut BoardResource, game:
         return;
     }
     
+    // レンダリング関連の情報を取得
+    let canvas_width = 800.0; // デフォルト値
+    let canvas_height = 600.0; // デフォルト値
+    
     // マウス入力処理
     if input.is_mouse_pressed(0) { // 左クリック
         let (mouse_x, mouse_y) = input.get_mouse_position();
-        if let Some(cell_index) = board.get_cell_index(mouse_x, mouse_y) {
+        let mouse_x_f64 = mouse_x as f64;
+        let mouse_y_f64 = mouse_y as f64;
+        
+        if let Some(cell_index) = board.get_cell_index(mouse_x_f64, mouse_y_f64, canvas_width, canvas_height) {
             // セルを開く
-            let exploded = board.reveal_cell(cell_index);
-            
-            // 爆発した場合はゲームオーバー
-            if exploded {
-                board.reveal_all_mines();
-                game.set_game_over(false);
-                return;
-            }
-            
-            // 勝利条件チェック
-            if board.check_win_condition() {
-                board.reveal_all_mines();
-                game.add_score((board.config.width * board.config.height) as u32);
-                game.set_game_over(true);
+            match board.reveal_cell(cell_index) {
+                Ok(_) => {
+                    // 爆発したかどうかはreveal_cellの処理内でboard.game_overとboard.winを設定している
+                    if board.game_over {
+                        if !board.win {
+                            // 爆発した場合（ゲームオーバーで勝利でない）
+                            // セルは既にreveal_cell内で明らかにされている
+                            game.set_game_over(false);
+                            return;
+                        } else {
+                            // 勝利条件達成の場合
+                            game.add_score((board.width * board.height) as u32);
+                            game.set_game_over(true);
+                        }
+                    }
+                },
+                Err(e) => {
+                    // エラーが発生した場合はコンソールに出力
+                    log(&format!("セルを開く際にエラーが発生しました: {:?}", e));
+                    return;
+                }
             }
         }
     } else if input.is_mouse_pressed(2) { // 右クリック
         let (mouse_x, mouse_y) = input.get_mouse_position();
-        if let Some(cell_index) = board.get_cell_index(mouse_x, mouse_y) {
+        let mouse_x_f64 = mouse_x as f64;
+        let mouse_y_f64 = mouse_y as f64;
+        
+        if let Some(cell_index) = board.get_cell_index(mouse_x_f64, mouse_y_f64, canvas_width, canvas_height) {
             // フラグを切り替える
             board.toggle_flag(cell_index);
         }

@@ -106,7 +106,9 @@ pub fn ui_system(resources: &[Rc<RefCell<dyn Any>>]) {
             update_ui(&mut ui_state, game, input);
             
             // UIを描画
-            draw_ui(render.get_context(), &ui_state, game, time);
+            if let Some(context) = render.get_context() {
+                draw_ui(context, &ui_state, game, time);
+            }
         });
     }
 }
@@ -139,8 +141,8 @@ fn update_ui(ui_state: &mut UiState, game: &GameStateResource, input: &InputReso
                 ui_state.buttons.clear();
                 generate_game_over_buttons(ui_state);
             }
-        },
-        _ => {}
+            },
+            _ => {}
     }
     
     // ボタンのホバー状態を更新
@@ -313,7 +315,7 @@ fn draw_button(context: &web_sys::CanvasRenderingContext2d, button: &Button) {
         "#005577"
     } else if button.is_hovered {
         "#0088aa"
-    } else {
+        } else {
         "#0099cc"
     };
     
@@ -328,10 +330,10 @@ fn draw_button(context: &web_sys::CanvasRenderingContext2d, button: &Button) {
     // ボタンのテキスト
     context.set_fill_style(&JsValue::from_str("#ffffff"));
     context.set_font("16px Arial");
-    context.set_text_align("center");
-    context.set_text_baseline("middle");
-    context.fill_text(
-        &button.text, 
+        context.set_text_align("center");
+        context.set_text_baseline("middle");
+        context.fill_text(
+            &button.text,
         button.x + button.width / 2.0, 
         button.y + button.height / 2.0
     ).unwrap();
@@ -369,7 +371,7 @@ fn draw_playing_ui(
     
     // スコアを表示
     context.set_text_align("right");
-    context.fill_text(
+        context.fill_text(
         &format!("スコア: {}", game.score),
         790.0,
         10.0
@@ -380,7 +382,7 @@ fn draw_playing_ui(
         context.set_text_align("left");
         context.set_font("12px Arial");
         context.fill_text(
-            &format!("FPS: {:.1}", time.fps),
+            &format!("FPS: {:.1}", time.get_fps()),
             10.0,
             40.0
         ).unwrap();
@@ -403,8 +405,8 @@ fn draw_pause_menu(context: &web_sys::CanvasRenderingContext2d) {
 
 /// ゲームオーバーUIを描画
 fn draw_game_over_ui(context: &web_sys::CanvasRenderingContext2d, game: &GameStateResource) {
-    // 半透明の背景
-    context.set_fill_style(&JsValue::from_str("rgba(0, 0, 0, 0.7)"));
+        // 半透明の背景
+        context.set_fill_style(&JsValue::from_str("rgba(0, 0, 0, 0.7)"));
     context.fill_rect(0.0, 0.0, 800.0, 600.0);
     
     // 結果タイトル
@@ -412,7 +414,7 @@ fn draw_game_over_ui(context: &web_sys::CanvasRenderingContext2d, game: &GameSta
         GamePhase::GameOver { win, .. } => {
             if win {
                 "ゲームクリア！"
-            } else {
+        } else {
                 "ゲームオーバー"
             }
         },
@@ -423,8 +425,8 @@ fn draw_game_over_ui(context: &web_sys::CanvasRenderingContext2d, game: &GameSta
         if title == "ゲームクリア！" { "#44ff44" } else { "#ff4444" }
     ));
     context.set_font("32px Arial");
-    context.set_text_align("center");
-    context.set_text_baseline("middle");
+        context.set_text_align("center");
+        context.set_text_baseline("middle");
     context.fill_text(title, 400.0, 150.0).unwrap();
     
     // スコア表示
@@ -440,8 +442,8 @@ fn draw_game_over_ui(context: &web_sys::CanvasRenderingContext2d, game: &GameSta
             400.0,
             200.0
         ).unwrap();
-        
-        context.fill_text(
+            
+            context.fill_text(
             &format!("時間: {:02}:{:02}", minutes, seconds),
             400.0,
             240.0

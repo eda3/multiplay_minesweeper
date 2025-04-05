@@ -93,11 +93,10 @@ pub fn game_tick_system(resources: &[Rc<RefCell<dyn Any>>]) {
         if game.is_playing() {
             // 定期的な更新処理（例：1秒ごとのスコア更新など）
             let tick_interval = 1000.0; // 1秒
-            let elapsed = time.total_time() * 1000.0; // ミリ秒に変換
+            let elapsed = time.total_time * 1000.0; // ミリ秒に変換
             
             // 現在の時間を1000で割った余りが前フレームより小さい場合、1秒経過
-            let max_delta = 0.1; // 最大デルタタイム（100ms）
-            if (elapsed % tick_interval) < time.fixed_delta_time(max_delta) * 1000.0 {
+            if (elapsed % tick_interval) < time.get_delta_time() * 1000.0 {
                 // 1秒ごとのゲーム内処理
                 // 例：タイムアタックモードのスコア減少など
             }

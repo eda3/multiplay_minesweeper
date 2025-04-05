@@ -2,7 +2,8 @@
  * ボードに関するリソース定義
  */
 use std::collections::HashMap;
-use crate::components::{CellStateComponent, CellContentComponent, EntityId};
+use crate::components::{CellStateComponent, CellContentComponent};
+use crate::entities::EntityId;
 use crate::models::CellValue;
 use super::resource_trait::Resource;
 

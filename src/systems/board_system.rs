@@ -10,8 +10,8 @@ use wasm_bindgen::JsValue;
 
 use crate::entities::EntityManager;
 use crate::systems::system_registry::DeltaTime;
-use crate::resources::BoardResource;
-use crate::resources::board_state::CellState;
+use crate::resources::board_state::BoardResource;
+use crate::resources::board_state::{CellState, Cell};
 use crate::board::Board;
 use crate::models::CellValue;
 
@@ -67,17 +67,32 @@ fn update_board_entities(
             board_comp.width = board.config.width;
             board_comp.height = board.config.height;
             board_comp.mine_count = board.config.mine_count;
-            board_comp.cells = board.cells.iter().map(|c| {
-                if c.is_mine {
+            
+            // CellValueの配列を作成
+            let mut cells = Vec::with_capacity(board.cells.len());
+            
+            // BoardResourceの各セル情報をBoardのCellValue型に変換
+            for cell in &board.cells {
+                // Cell構造体からCellValue enumへ変換
+                let cell_value = if cell.is_mine {
                     CellValue::Mine
                 } else {
-                    CellValue::Empty(c.adjacent_mines)
-                }
-            }).collect();
+                    CellValue::Empty(cell.adjacent_mines)
+                };
+                cells.push(cell_value);
+            }
+            board_comp.cells = cells;
             
             // セルの状態をbool配列に変換
-            let revealed = board.cells.iter().map(|c| c.is_revealed()).collect();
-            let flagged = board.cells.iter().map(|c| c.is_flagged()).collect();
+            let mut revealed = vec![false; board.cells.len()];
+            let mut flagged = vec![false; board.cells.len()];
+            
+            // 各セルの状態からrevealed/flagged配列を作成
+            for (i, cell) in board.cells.iter().enumerate() {
+                // Cell型の状態チェックメソッドを使用
+                revealed[i] = cell.is_revealed(); // is_revealed()メソッドはCell型にある
+                flagged[i] = cell.is_flagged();   // is_flagged()メソッドもCell型にある
+            }
             
             board_comp.revealed = revealed;
             board_comp.flagged = flagged;

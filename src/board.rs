@@ -9,7 +9,7 @@ use crate::js_bindings::log;
 /**
  * マインスイーパーのボードを表す構造体
  */
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Board {
     /// ボードの幅
     pub width: usize,
@@ -31,6 +31,12 @@ pub struct Board {
     pub game_over: bool,
     /// 勝利したかどうか
     pub win: bool,
+    /// 初回クリックかどうか
+    pub first_click: bool,
+    /// 残りの安全なセル数
+    pub remaining_safe_cells: usize,
+    /// フラグが立てられたセル数
+    pub flagged_count: usize,
 }
 
 impl Board {
@@ -38,17 +44,28 @@ impl Board {
      * 新しいボードを作成する
      */
     pub fn new(width: usize, height: usize, mine_count: usize, cell_size: f64) -> Self {
+        let total_cells = width * height;
+        let mut cells = Vec::with_capacity(total_cells);
+        
+        // すべてのセルを空で初期化
+        for _ in 0..total_cells {
+            cells.push(CellValue::Empty(0));
+        }
+        
         Self {
             width,
             height,
             mine_count,
             cell_size,
-            cells: vec![CellValue::Empty(0); width * height],
-            revealed: vec![false; width * height],
-            flagged: vec![false; width * height],
+            cells,
+            revealed: vec![false; total_cells],
+            flagged: vec![false; total_cells],
             game_started: false,
             game_over: false,
             win: false,
+            first_click: true,
+            remaining_safe_cells: total_cells - mine_count,
+            flagged_count: 0,
         }
     }
     
@@ -56,12 +73,22 @@ impl Board {
      * ボードを初期化する
      */
     pub fn initialize(&mut self) {
-        self.cells = vec![CellValue::Empty(0); self.width * self.height];
-        self.revealed = vec![false; self.width * self.height];
-        self.flagged = vec![false; self.width * self.height];
+        self.first_click = true;
         self.game_started = false;
         self.game_over = false;
         self.win = false;
+        self.remaining_safe_cells = self.width * self.height - self.mine_count;
+        self.flagged_count = 0;
+        
+        // すべてのセルを空で初期化
+        let total_cells = self.width * self.height;
+        self.cells.clear();
+        for _ in 0..total_cells {
+            self.cells.push(CellValue::Empty(0));
+        }
+        
+        self.revealed = vec![false; total_cells];
+        self.flagged = vec![false; total_cells];
     }
     
     /**
@@ -206,22 +233,32 @@ impl Board {
      * @return セルのインデックス（Option<usize>）
      */
     pub fn get_cell_index(&self, x: f64, y: f64, canvas_width: f64, canvas_height: f64) -> Option<usize> {
-        // ボードの左上の座標
-        let board_left = (canvas_width - self.cell_size * self.width as f64) / 2.0;
-        let board_top = (canvas_height - self.cell_size * self.height as f64) / 2.0;
+        // 画面中央にボードを配置するためのオフセットを計算
+        let board_width_px = self.width as f64 * self.cell_size;
+        let board_height_px = self.height as f64 * self.cell_size;
         
-        // ボード外の場合はNone
-        if x < board_left || x >= board_left + self.cell_size * self.width as f64 ||
-           y < board_top || y >= board_top + self.cell_size * self.height as f64 {
+        let offset_x = (canvas_width - board_width_px) / 2.0;
+        let offset_y = (canvas_height - board_height_px) / 2.0;
+        
+        // オフセットを考慮した相対座標を計算
+        let rel_x = x - offset_x;
+        let rel_y = y - offset_y;
+        
+        // ボード外のクリックは無視
+        if rel_x < 0.0 || rel_y < 0.0 || rel_x >= board_width_px || rel_y >= board_height_px {
             return None;
         }
         
-        // セルの座標を計算
-        let cell_x = ((x - board_left) / self.cell_size) as usize;
-        let cell_y = ((y - board_top) / self.cell_size) as usize;
+        // セルの位置を計算
+        let cell_x = (rel_x / self.cell_size) as usize;
+        let cell_y = (rel_y / self.cell_size) as usize;
         
-        // インデックスを返す
-        Some(cell_y * self.width + cell_x)
+        // 座標が有効な範囲内かチェック
+        if cell_x < self.width && cell_y < self.height {
+            Some(cell_y * self.width + cell_x)
+        } else {
+            None
+        }
     }
     
     /**
@@ -325,5 +362,31 @@ impl Board {
      */
     pub fn get_flagged_cells(&self) -> &Vec<bool> {
         &self.flagged
+    }
+    
+    /**
+     * 勝利条件をチェック
+     */
+    pub fn check_win_condition(&self) -> bool {
+        self.remaining_safe_cells == 0
+    }
+    
+    /**
+     * すべての地雷を表示
+     */
+    pub fn reveal_all_mines(&mut self) {
+        for i in 0..self.cells.len() {
+            if let CellValue::Mine = self.cells[i] {
+                // 地雷のセルを表示済みにする処理（この実装は仮）
+                // 実際の処理はレンダリング時に処理する想定
+            }
+        }
+    }
+    
+    /**
+     * ボードをリセット
+     */
+    pub fn reset(&mut self) {
+        self.initialize();
     }
 } 

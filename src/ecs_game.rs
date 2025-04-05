@@ -3,7 +3,7 @@ use crate::system::{SystemRegistry, SystemPhase};
 use crate::resources::{
     ResourceManager, 
     PlayerStateResource, 
-    CoreGameResource, 
+    GameStateResource,
     TimeResource, 
     GameConfigResource,
     BoardStateResource,
@@ -13,9 +13,14 @@ use crate::resources::{
 };
 use crate::ecs::World;
 use crate::resources::{
-    GameStateResource, 
     BoardResource,
 };
+use crate::systems::input;
+use crate::ecs_game::input::GameplayInputSystem;
+use crate::ecs_game::input::UIInputSystem;
+use crate::system::System;
+use crate::systems::InputCollectionSystem;
+use crate::systems::InputProcessingSystem;
 
 /// ECSベースのゲームエンジン
 /// リソースとシステムを管理し、ゲームループを実行する
@@ -63,6 +68,39 @@ impl EcsGame {
     fn setup_default_systems(&mut self) {
         // システムレジストリのデフォルトシステム登録を呼び出し
         self.world.systems_mut().register_default_systems();
+        
+        // 入力システムを登録
+        self.register_input_systems();
+    }
+
+    /// 入力システムを登録
+    fn register_input_systems(&mut self) {
+        input::register_input_systems(self.world.systems_mut());
+    }
+
+    /// システムを登録する
+    fn register_systems(&mut self) {
+        let mut input_collection = InputCollectionSystem::new();
+        let mut input_processing = InputProcessingSystem::new();
+        let mut ui_input = UIInputSystem::new();
+        let mut gameplay_input = GameplayInputSystem::new();
+        
+        // システムの登録
+        let collection_id = self.world.add_system(input_collection);
+        let processing_id = self.world.add_system(input_processing);
+        
+        // UIInputSystemを登録し、依存関係を設定
+        let mut ui_input_system = UIInputSystem::new();
+        ui_input_system.set_dependency(processing_id);
+        let ui_input_id = self.world.add_system(ui_input_system);
+        
+        // GameplayInputSystemを登録し、依存関係を設定
+        let mut gameplay_input_system = GameplayInputSystem::new();
+        gameplay_input_system.set_dependency(ui_input_id);
+        self.world.add_system(gameplay_input_system);
+        
+        // その他のシステムも登録
+        // ... existing code ...
     }
 
     /// システムを追加
@@ -73,28 +111,19 @@ impl EcsGame {
         self.world.add_system(system)
     }
 
-    /// ゲームループの1フレームを実行
+    /// ゲームを更新（1フレーム分）
     pub fn update(&mut self) {
         if !self.initialized {
             self.initialize();
         }
-
-        // TimeResourceを更新
+        
+        // 時間リソースを更新
         if let Some(time) = self.world.get_resource_mut::<TimeResource>() {
-            time.begin_frame();
+            time.update();
         }
-
-        // 各フェーズのシステムを実行
+        
+        // 全システムを実行
         self.world.run_systems();
-
-        // CoreGameResourceのチェック - ゲームが終了したかどうか
-        if let Some(core_game) = self.world.get_resource::<CoreGameResource>() {
-            let phase = core_game.phase.clone();
-            if let GamePhase::GameOver { .. } = phase {
-                // ゲームオーバー処理
-                println!("Game Over! Score: {}", core_game.score);
-            }
-        }
     }
 
     /// リソースへの参照を取得
@@ -114,28 +143,28 @@ impl EcsGame {
 
     /// ゲームをスタート
     pub fn start_game(&mut self) {
-        if let Some(core_game) = self.world.get_resource_mut::<CoreGameResource>() {
+        if let Some(core_game) = self.world.get_resource_mut::<GameStateResource>() {
             core_game.start_game();
         }
     }
 
     /// ゲームを一時停止
     pub fn pause_game(&mut self) {
-        if let Some(core_game) = self.world.get_resource_mut::<CoreGameResource>() {
+        if let Some(core_game) = self.world.get_resource_mut::<GameStateResource>() {
             core_game.pause_game();
         }
     }
 
     /// ゲームを再開
     pub fn resume_game(&mut self) {
-        if let Some(core_game) = self.world.get_resource_mut::<CoreGameResource>() {
+        if let Some(core_game) = self.world.get_resource_mut::<GameStateResource>() {
             core_game.resume_game();
         }
     }
 
     /// ゲームを終了
     pub fn end_game(&mut self, win: bool) {
-        if let Some(core_game) = self.world.get_resource_mut::<CoreGameResource>() {
+        if let Some(core_game) = self.world.get_resource_mut::<GameStateResource>() {
             core_game.set_game_over(win);
         }
     }
@@ -143,7 +172,7 @@ impl EcsGame {
     /// ゲームのフェーズを取得
     pub fn game_phase(&self) -> GamePhase {
         self.world
-            .get_resource::<CoreGameResource>()
+            .get_resource::<GameStateResource>()
             .map_or(GamePhase::StartScreen, |core| core.phase.clone())
     }
     
@@ -203,7 +232,7 @@ mod tests {
         game.initialize();
 
         // コアリソースが初期化されているか確認
-        assert!(game.get_resource::<CoreGameResource>().is_some());
+        assert!(game.get_resource::<GameStateResource>().is_some());
         assert!(game.get_resource::<TimeResource>().is_some());
         assert!(game.get_resource::<PlayerStateResource>().is_some());
         assert!(game.get_resource::<GameConfigResource>().is_some());

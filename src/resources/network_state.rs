@@ -1,45 +1,54 @@
 /**
- * ネットワークリソース
+ * ネットワーク状態リソース
  * 
- * WebSocket接続とネットワークメッセージを管理する
+ * マルチプレイヤー機能のためのネットワーク状態を管理するリソース
  */
-use super::resource_trait::Resource;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
-use web_sys::{WebSocket, MessageEvent, CloseEvent, Event};
-use js_sys::Function;
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::rc::Rc;
-use serde_json::Value;
-use std::any::Any;
 
-/// ネットワーク状態を管理するリソース
+use wasm_bindgen::JsValue;
+use wasm_bindgen::JsCast;
+use web_sys::{WebSocket, MessageEvent};
+use std::collections::VecDeque;
+
+/// ネットワークメッセージ型
 #[derive(Debug, Clone)]
+pub enum NetworkMessage {
+    Connect(String),      // プレイヤーID
+    Disconnect(String),   // プレイヤーID
+    Position(String, f64, f64), // プレイヤーID, x, y
+    RevealCell(String, usize, usize), // プレイヤーID, row, col
+    FlagCell(String, usize, usize),   // プレイヤーID, row, col
+    ResetGame(String),    // プレイヤーID
+    ChatMessage(String, String), // プレイヤーID, メッセージ
+    Error(String),        // エラーメッセージ
+    Raw(String),          // 生のメッセージ
+}
+
+/// ネットワーク状態リソース
+#[derive(Debug)]
 pub struct NetworkResource {
-    /// WebSocketの接続状態
-    pub is_connected: bool,
-    /// サーバURL
-    pub server_url: String,
-    /// 受信メッセージのキュー
-    pub message_queue: Vec<String>,
-    /// 最終接続試行時間
-    pub last_connect_attempt: f64,
-    /// 接続試行回数
-    pub connect_attempts: u32,
-    /// 自動再接続するかどうか
-    pub auto_reconnect: bool,
+    /// WebSocketインスタンス
+    pub socket: Option<WebSocket>,
+    /// 接続状態
+    pub connected: bool,
+    /// セッションID
+    pub session_id: Option<String>,
+    /// プレイヤーID
+    pub player_id: Option<String>,
+    /// 受信メッセージキュー
+    pub message_queue: VecDeque<NetworkMessage>,
+    /// 最後のエラー
+    pub last_error: Option<String>,
 }
 
 impl Default for NetworkResource {
     fn default() -> Self {
         Self {
-            is_connected: false,
-            server_url: "ws://localhost:8080".to_string(),
-            message_queue: Vec::new(),
-            last_connect_attempt: 0.0,
-            connect_attempts: 0,
-            auto_reconnect: true,
+            socket: None,
+            connected: false,
+            session_id: None,
+            player_id: None,
+            message_queue: VecDeque::new(),
+            last_error: None,
         }
     }
 }
@@ -50,111 +59,123 @@ impl NetworkResource {
         Self::default()
     }
     
-    /// サーバURLを設定
-    pub fn set_server_url(&mut self, url: &str) {
-        self.server_url = url.to_string();
-    }
-    
-    /// WebSocket接続を確立
-    pub fn connect(&mut self) -> Result<WebSocket, JsValue> {
-        // 現在時間を記録
-        self.last_connect_attempt = js_sys::Date::now();
-        self.connect_attempts += 1;
-        
-        // WebSocket接続を作成
-        let ws = WebSocket::new(&self.server_url)?;
-        
-        // バイナリ型をArrayBufferに設定
-        ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
-        
-        self.is_connected = false;
-        
-        Ok(ws)
-    }
-    
-    /// メッセージを送信（WebSocketインスタンスが必要）
-    pub fn send_message(&self, ws: &WebSocket, message: &str) -> Result<(), JsValue> {
-        if !self.is_connected {
-            return Err(JsValue::from_str("Not connected to server"));
+    /// WebSocketを接続
+    pub fn connect(&mut self, url: &str) -> Result<(), JsValue> {
+        // 既存の接続を閉じる
+        if let Some(socket) = &self.socket {
+            socket.close()?;
         }
         
-        ws.send_with_str(message)
-    }
-    
-    /// メッセージをキューに追加
-    pub fn queue_message(&mut self, message: &str) {
-        self.message_queue.push(message.to_string());
-    }
-    
-    /// 接続状態を設定
-    pub fn set_connected(&mut self, connected: bool) {
-        self.is_connected = connected;
+        // 新しいWebSocketを作成
+        let socket = WebSocket::new(url)?;
         
-        if connected {
-            // 接続に成功したらカウンタをリセット
-            self.connect_attempts = 0;
+        // イベントリスナーを設定する必要があるが、
+        // Rust側からはクロージャを渡す必要があるため、
+        // 実際の実装ではJS側でイベントをハンドリングすることが多い
+        
+        self.socket = Some(socket);
+        self.connected = false; // open イベントが発生するまで false
+        
+        Ok(())
+    }
+    
+    /// 接続を閉じる
+    pub fn disconnect(&mut self) -> Result<(), JsValue> {
+        if let Some(socket) = &self.socket {
+            socket.close()?;
+        }
+        
+        self.socket = None;
+        self.connected = false;
+        self.session_id = None;
+        
+        Ok(())
+    }
+    
+    /// メッセージを送信
+    pub fn send_message(&self, message: &str) -> Result<(), JsValue> {
+        if let Some(socket) = &self.socket {
+            if self.connected {
+                socket.send_with_str(message)?;
+                return Ok(());
+            }
+        }
+        
+        Err(JsValue::from_str("WebSocket not connected"))
+    }
+    
+    /// プレイヤー位置を送信
+    pub fn send_position(&self, x: f64, y: f64) -> Result<(), JsValue> {
+        if let Some(player_id) = &self.player_id {
+            let message = format!("{{\"type\":\"position\",\"id\":\"{}\",\"x\":{},\"y\":{}}}", player_id, x, y);
+            self.send_message(&message)
+        } else {
+            Err(JsValue::from_str("Player ID not set"))
         }
     }
     
-    /// 再接続を試みるべきかどうかを判定
-    pub fn should_reconnect(&self) -> bool {
-        if !self.auto_reconnect || self.is_connected {
-            return false;
+    /// セル公開リクエストを送信
+    pub fn send_reveal_cell(&self, row: usize, col: usize) -> Result<(), JsValue> {
+        if let Some(player_id) = &self.player_id {
+            let message = format!("{{\"type\":\"reveal\",\"id\":\"{}\",\"row\":{},\"col\":{}}}", player_id, row, col);
+            self.send_message(&message)
+        } else {
+            Err(JsValue::from_str("Player ID not set"))
         }
-        
-        // 最後の接続試行から5秒以上経過している、かつ試行回数が20未満
-        let now = js_sys::Date::now();
-        let elapsed = now - self.last_connect_attempt;
-        
-        elapsed > 5000.0 && self.connect_attempts < 20
     }
     
-    /// WebSocketイベントハンドラを設定
-    pub fn setup_event_handlers(&self, ws: &WebSocket, 
-                               on_message: js_sys::Function, 
-                               on_open: js_sys::Function, 
-                               on_close: js_sys::Function, 
-                               on_error: js_sys::Function) {
-        let msg_fn = on_message.clone();
-        let open_fn = on_open.clone();
-        let close_fn = on_close.clone();
-        let err_fn = on_error.clone();
+    /// フラグトグルリクエストを送信
+    pub fn send_flag_cell(&self, row: usize, col: usize) -> Result<(), JsValue> {
+        if let Some(player_id) = &self.player_id {
+            let message = format!("{{\"type\":\"flag\",\"id\":\"{}\",\"row\":{},\"col\":{}}}", player_id, row, col);
+            self.send_message(&message)
+        } else {
+            Err(JsValue::from_str("Player ID not set"))
+        }
+    }
+    
+    /// リセットリクエストを送信
+    pub fn send_reset_game(&self) -> Result<(), JsValue> {
+        if let Some(player_id) = &self.player_id {
+            let message = format!("{{\"type\":\"reset\",\"id\":\"{}\"}}", player_id);
+            self.send_message(&message)
+        } else {
+            Err(JsValue::from_str("Player ID not set"))
+        }
+    }
+    
+    /// チャットメッセージを送信
+    pub fn send_chat_message(&self, text: &str) -> Result<(), JsValue> {
+        if let Some(player_id) = &self.player_id {
+            let message = format!("{{\"type\":\"chat\",\"id\":\"{}\",\"text\":\"{}\"}}", player_id, text);
+            self.send_message(&message)
+        } else {
+            Err(JsValue::from_str("Player ID not set"))
+        }
+    }
+    
+    /// メッセージを受信（JS側から呼び出される）
+    pub fn receive_message(&mut self, event: MessageEvent) -> Result<(), JsValue> {
+        let data = event.data();
         
-        // メッセージ受信ハンドラ
-        let onmessage_callback = Closure::wrap(
-            Box::new(move |e: MessageEvent| {
-                let _ = msg_fn.call1(&JsValue::NULL, &e);
-            }) as Box<dyn FnMut(MessageEvent)>
-        );
-        ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
-        onmessage_callback.forget();
+        // テキストメッセージの場合
+        if let Ok(text) = data.dyn_into::<js_sys::JsString>() {
+            let text = String::from(text);
+            
+            // 一旦生メッセージとしてキューに追加
+            self.message_queue.push_back(NetworkMessage::Raw(text));
+        }
         
-        // 接続成功ハンドラ
-        let onopen_callback = Closure::wrap(
-            Box::new(move |_| {
-                let _ = open_fn.call0(&JsValue::NULL);
-            }) as Box<dyn FnMut(JsValue)>
-        );
-        ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
-        onopen_callback.forget();
-        
-        // 接続終了ハンドラ
-        let onclose_callback = Closure::wrap(
-            Box::new(move |e: CloseEvent| {
-                let _ = close_fn.call1(&JsValue::NULL, &e);
-            }) as Box<dyn FnMut(CloseEvent)>
-        );
-        ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
-        onclose_callback.forget();
-        
-        // エラーハンドラ
-        let connected = self.is_connected;
-        let error_callback = Closure::wrap(
-            Box::new(move |e: Event| {
-                let _ = err_fn.call1(&JsValue::NULL, &e);
-            }) as Box<dyn FnMut(Event)>
-        );
-        ws.set_onerror(Some(error_callback.as_ref().unchecked_ref()));
-        error_callback.forget();
+        Ok(())
+    }
+    
+    /// メッセージキューからメッセージを取得
+    pub fn poll_message(&mut self) -> Option<NetworkMessage> {
+        self.message_queue.pop_front()
+    }
+    
+    /// エラーを設定
+    pub fn set_error(&mut self, error: String) {
+        self.last_error = Some(error);
     }
 } 

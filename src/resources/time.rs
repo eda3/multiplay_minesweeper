@@ -146,9 +146,6 @@ impl TimeResource {
     }
 }
 
-// Resourceトレイトの実装
-impl Resource for TimeResource {}
-
 impl Default for TimeResource {
     fn default() -> Self {
         Self::new()

@@ -22,8 +22,14 @@ use crate::board::Board;
 // ECS関連
 use crate::ecs_game::EcsGame;
 use crate::resources::{
-    CoreGameResource, GamePhase, TimeResource, 
-    PlayerStateResource, GameStateResource, MouseState
+    BoardResource,
+    PlayerStateResource,
+    GameStateResource,
+    GamePhase, 
+    TimeResource, 
+    InputResource,
+    GameConfigResource,
+    MouseState
 };
 
 /**
@@ -182,7 +188,7 @@ impl CompatGameState {
                             
                             // PlayerStateResourceを更新
                             if let Some(player_state) = game_state.ecs_game.get_resource_mut::<PlayerStateResource>() {
-                                player_state.remove_player(id);
+                                player_state.remove_player();
                             }
                             
                             // 既存のハッシュマップも更新（移行期間中）
@@ -200,11 +206,11 @@ impl CompatGameState {
                         ) {
                             // PlayerStateResourceを更新
                             if let Some(player_state) = game_state.ecs_game.get_resource_mut::<PlayerStateResource>() {
-                                player_state.update_player_position(id, x, y);
+                                player_state.update_player_position(x, y);
                             }
                             
                             // 既存のハッシュマップも更新（移行期間中）
-                            game_state.update_player_position(id, x, y);
+                            game_state.update_player_position(x, y);
                         }
                         
                         Ok(())
@@ -389,7 +395,7 @@ impl CompatGameState {
     pub fn remove_player(&mut self, id: &str) {
         // PlayerStateResourceを更新（すでに上位の関数で更新されている場合もある）
         if let Some(player_state) = self.ecs_game.get_resource_mut::<PlayerStateResource>() {
-            player_state.remove_player(id);
+            player_state.remove_player();
         }
         
         // プレイヤー数を更新
@@ -399,15 +405,16 @@ impl CompatGameState {
     /**
      * プレイヤーのポジションを更新する
      * 
-     * @param id プレイヤーID
      * @param x X座標
      * @param y Y座標
      */
-    pub fn update_player_position(&mut self, id: &str, x: f64, y: f64) {
-        // PlayerStateResourceを更新（すでに上位の関数で更新されている場合もある）
-        if let Some(player_state) = self.ecs_game.get_resource_mut::<PlayerStateResource>() {
-            player_state.update_player_position(id, x, y);
+    pub fn update_player_position(&mut self, x: f64, y: f64) {
+        // ECSゲームリソースを更新
+        if let Some(mut player_state) = self.ecs_game.get_resource_mut::<PlayerStateResource>() {
+            player_state.update_player_position(x, y);
         }
+        
+        // WebSocketでの配信は別のシステムで処理
     }
 
     /**
@@ -496,9 +503,8 @@ impl CompatGameState {
      */
     pub fn update(&mut self) -> Result<(), JsValue> {
         // マウス座標をPlayerStateResourceに反映
-        if let Some(player_state) = self.ecs_game.get_resource_mut::<PlayerStateResource>() {
-            // 保存されているマウス座標を使用
-            player_state.update_player_position("local", self.mouse_x, self.mouse_y);
+        if let Some(mut player_state) = self.ecs_game.get_resource_mut::<PlayerStateResource>() {
+            player_state.update_player_position(self.mouse_x, self.mouse_y);
             
             // マウスボタンの状態も更新
             if self.mouse_down {
@@ -625,7 +631,7 @@ impl CompatGameState {
         
         // TimeResourceから時間情報を取得
         let current_time = if let Some(time) = self.ecs_game.get_resource::<TimeResource>() {
-            time.total_time()
+            time.elapsed().as_secs_f64()
         } else {
             now
         };
@@ -705,7 +711,7 @@ impl CompatGameState {
         
         // PlayerStateResourceも更新
         if let Some(player_state) = self.ecs_game.get_resource_mut::<PlayerStateResource>() {
-            player_state.update_player_position("local", x, y);
+            player_state.update_player_position(x, y);
         }
     }
     
