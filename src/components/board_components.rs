@@ -5,7 +5,8 @@ use std::any::{Any, TypeId};
 use std::fmt::{self, Debug};
 use crate::components::component_trait::Component;
 use crate::entities::EntityId;
-use crate::models::CellValue;
+use serde::{Serialize, Deserialize};
+use crate::models::cell::CellValue;
 
 /// セルの状態を表す列挙型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

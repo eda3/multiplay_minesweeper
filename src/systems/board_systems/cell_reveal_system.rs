@@ -22,7 +22,7 @@ use crate::resources::{
     Resource
 };
 use crate::components::board_components::{CellStateComponent, CellState, CellContentComponent, GridPositionComponent};
-use crate::models::CellValue;
+use crate::models::cell::CellValue;
 use crate::ecs::system::{System, SystemResult};
 use crate::resources::ResourceManager;
 use crate::resources::{

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use crate::components::{CellStateComponent, CellContentComponent};
 use crate::entities::EntityId;
-use crate::models::CellValue;
+use crate::models::cell::CellValue;
 use super::resource_trait::Resource;
 
 /**

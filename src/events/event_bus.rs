@@ -100,6 +100,27 @@ impl EventBus {
         }
     }
     
+    /// イベントハンドラを削除（型に依存しない）
+    pub fn unregister_handler_any(&self, handler_id: u64) {
+        let mut handlers = self.handlers.write().unwrap();
+        
+        // すべての型のハンドラマップをチェック
+        for (_type_id, type_handlers) in handlers.iter_mut() {
+            let initial_count = type_handlers.len();
+            
+            // 指定されたIDを持つハンドラを削除
+            type_handlers.retain(|h| {
+                // 任意のEventHandler型を試してダウンキャスト
+                let retain = try_get_handler_id(h.as_ref()) != Some(handler_id);
+                retain
+            });
+            
+            if initial_count != type_handlers.len() && self.debug {
+                println!("削除されたハンドラ: ID {}", handler_id);
+            }
+        }
+    }
+    
     /// イベントの発行
     pub fn publish<T: Event>(&self, event: T) {
         let type_id = TypeId::of::<T>();
@@ -171,6 +192,70 @@ impl EventBus {
             println!("すべてのハンドラがクリアされました");
         }
     }
+}
+
+/// 型を知らないハンドラからIDを取得するヘルパー関数
+fn try_get_handler_id(handler: &dyn Any) -> Option<u64> {
+    // 一般的なイベントハンドラー型に対してダウンキャストを試みる
+    // これは例示的なリストで、実際のコードでは使用するすべての型をカバーする必要がある
+    macro_rules! try_downcast {
+        ($handler:expr, $($t:ty),*) => {
+            $(
+                if let Some(h) = $handler.downcast_ref::<EventHandler<$t>>() {
+                    return Some(h.id);
+                }
+            )*
+        };
+    }
+    
+    // 使用する可能性のあるすべてのイベント型を列挙
+    // 注意: これは例示的なもので、実際のコードでは使用するすべてのイベント型を追加する必要があります
+    use crate::events::game_events::*;
+    use crate::events::board_events::*;
+    use crate::events::input_events::*;
+    use crate::events::network_events::*;
+    
+    try_downcast!(
+        handler,
+        // ゲームイベント
+        GameStartEvent,
+        GameEndEvent,
+        GameStateChangeEvent,
+        TimerEvent,
+        DifficultyChangeEvent,
+        ScoreUpdateEvent,
+        
+        // ボードイベント
+        CellStateChangeEvent,
+        BulkCellStateChangeEvent,
+        FlagPlacedEvent,
+        CellRevealedEvent,
+        MultipleCellsRevealedEvent,
+        MineExplodedEvent,
+        BoardInitializedEvent,
+        GameProgressEvent,
+        
+        // 入力イベント
+        MouseMoveEvent,
+        MouseClickEvent,
+        KeyboardEvent,
+        UIClickEvent,
+        HotkeyEvent,
+        
+        // ネットワークイベント
+        NetworkConnectEvent,
+        NetworkDisconnectEvent,
+        NetworkErrorEvent,
+        DataReceivedEvent,
+        DataSentEvent,
+        SessionJoinEvent,
+        SessionLeaveEvent,
+        PlayerJoinedEvent,
+        PlayerLeftEvent,
+        LagMeasurementEvent
+    );
+    
+    None
 }
 
 impl Debug for EventBus {

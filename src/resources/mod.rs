@@ -14,6 +14,7 @@ pub mod network_state;
 pub mod render_state;
 pub mod resource_manager;
 pub mod draw_options;
+pub mod event_bus_resource;
 
 // リソースを再エクスポート
 pub use resource_trait::Resource;
@@ -25,12 +26,13 @@ pub use event_queue_resource::{EventQueueResource, GameEvent};
 pub use network_state::NetworkResource;
 pub use render_state::RenderResource;
 pub use draw_options::DrawOptions;
+pub use event_bus_resource::EventBusResource;
 
 // モデルをインポート
 // pub use board_state::{CellState, CellValue, Board, BoardConfig}; // board_state からは CellState, BoardConfig のみ使うか、正しいパスからインポート
 pub use board_state::{CellState, BoardConfig};
 
-pub use crate::models::CellValue;
+pub use crate::models::cell::CellValue;
 // pub use crate::board::Board; // BoardResource エイリアスを使うので不要か？
 
 // 型エイリアス

@@ -35,6 +35,7 @@ pub mod system;     // システムの基本インターフェース
 pub mod systems;    // 具体的なシステム実装
 pub mod ecs;        // ECSコア機能
 pub mod ecs_game;   // ECSベースのゲームエンジン
+pub mod events;     // イベント関連モジュール
 
 // サブモジュールからの要素をインポート
 use js_bindings::{log, request_animation_frame};
@@ -304,16 +305,4 @@ fn setup_event_listeners(canvas_id: &str) -> Result<(), JsValue> {
 #[cfg(test)]
 mod tests {
     // テストケースをここに書く
-}
-
-// Event実装マクロの定義
-#[macro_export]
-macro_rules! impl_event {
-    ($event_type:ty, $event_name:expr) => {
-        impl Event for $event_type {
-            fn name(&self) -> &'static str {
-                $event_name
-            }
-        }
-    };
 } 

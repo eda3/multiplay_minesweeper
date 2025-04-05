@@ -1,18 +1,21 @@
 /**
- * ボード関連のシステム
+ * ボードシステムモジュール
  * 
- * ボードの初期化、セル操作、勝利条件チェックなどを行うシステム群
+ * ボード関連の処理を行うシステム群
  */
 
-pub mod win_condition_system;
-pub mod flag_toggle_system;
-pub mod cell_reveal_system;
+// サブモジュールをエクスポート
 pub mod board_init_system;
+pub mod cell_reveal_system;
+pub mod flag_toggle_system;
+pub mod win_condition_system;
+// pub mod board_render_system; // 未実装モジュール
+pub mod cell_reveal_handler_system;
 
-// システムを再エクスポート
-pub use board_init_system::board_init_system;
-pub use cell_reveal_system::cell_reveal_system;
-pub use cell_reveal_system::reveal_cell;
-pub use cell_reveal_system::get_adjacent_cells_cached;
+// 公開するシステムをエクスポート
+// board_init_systemは関数として実装されているため、構造体としてはインポートしない
+pub use cell_reveal_system::CellRevealSystem;
 pub use flag_toggle_system::FlagToggleSystem;
-pub use win_condition_system::WinConditionSystem; 
+pub use win_condition_system::WinConditionSystem;
+// pub use board_render_system::BoardRenderSystem; // 未実装モジュール
+pub use cell_reveal_handler_system::CellRevealHandlerSystem; 

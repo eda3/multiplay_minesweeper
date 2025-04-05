@@ -42,7 +42,7 @@ macro_rules! impl_event_clone {
 macro_rules! impl_event {
     ($type:ty, $event_type:expr) => {
         impl Event for $type {
-            fn event_type(&self) -> &'static str {
+            fn name(&self) -> &'static str {
                 $event_type
             }
             
@@ -53,8 +53,6 @@ macro_rules! impl_event {
             fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
                 self
             }
-            
-            impl_event_clone!($type);
         }
     };
 }

@@ -2,7 +2,7 @@
  * マインスイーパーのボードを管理するモジュール
  */
 use wasm_bindgen::JsValue;
-use crate::models::CellValue;
+use crate::models::cell::CellValue;
 use crate::utils::{coordinates_to_index, index_to_coordinates, get_adjacent_offsets};
 use crate::js_bindings::log;
 

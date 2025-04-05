@@ -14,7 +14,7 @@ use crate::resources::{
     GamePhase,
     Resource
 };
-use crate::models::CellValue;
+use crate::models::cell::CellValue;
 use crate::ecs::system::{System, SystemResult};
 use crate::resources::ResourceManager;
 use wasm_bindgen::prelude::*;

@@ -18,7 +18,7 @@ use crate::resources::{BoardConfig, BoardResource};
 use crate::components::{CellStateComponent, CellContentComponent, GridPositionComponent};
 use crate::components::board_components::CellState;
 use crate::entities::entity::EntityId;
-use crate::models::CellValue;
+use crate::models::cell::CellValue;
 use crate::resources::GameStateResource;
 use crate::resources::board_resources::{BoardConfigResource, BoardStateResource};
 use crate::resources::event_queue_resource::EventQueueResource;

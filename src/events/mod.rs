@@ -16,18 +16,6 @@ pub mod network_events;
 #[cfg(test)]
 mod tests;
 
-// マクロの定義
-#[macro_export]
-macro_rules! impl_event {
-    ($event_type:ty, $event_name:expr) => {
-        impl Event for $event_type {
-            fn name(&self) -> &'static str {
-                $event_name
-            }
-        }
-    };
-}
-
 // 主要なコンポーネントの再エクスポート
 pub use event_trait::Event;
 pub use event_handler::{EventHandler, EventHandlerFn};

@@ -5,7 +5,8 @@ use wasm_bindgen::JsValue;
 use web_sys::CanvasRenderingContext2d;
 use std::collections::HashMap;
 
-use crate::models::{CellValue, Player, Screen};
+use crate::models::{Player, Screen};
+use crate::models::cell::CellValue;
 use crate::components::Position;
 use crate::board::Board;
 use crate::js_bindings::log;
@@ -199,6 +200,16 @@ impl GameRenderer {
                                     cell_y + cell_size / 2.0,
                                 )?;
                             }
+                        },
+                        CellValue::Unknown => {
+                            // 未知のセル（通常は表示されない）
+                            ctx.set_fill_style(&JsValue::from_str("#666666"));
+                            ctx.fill_rect(
+                                cell_x + cell_size * 0.3, 
+                                cell_y + cell_size * 0.3,
+                                cell_size * 0.4, 
+                                cell_size * 0.4
+                            );
                         }
                     }
                 } else if flagged[index] {

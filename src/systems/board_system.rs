@@ -13,7 +13,7 @@ use crate::systems::system_registry::DeltaTime;
 use crate::resources::board_state::BoardResource;
 use crate::resources::board_state::{CellState, Cell};
 use crate::board::Board;
-use crate::models::CellValue;
+use crate::models::cell::CellValue;
 
 // 新しいフラグを追加（実際にはBoardResourceに追加するべき）
 thread_local! {

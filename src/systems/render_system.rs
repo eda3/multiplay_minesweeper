@@ -14,7 +14,7 @@ use crate::resources::{BoardResource, CellState};
 use crate::resources::{GameStateResource, GamePhase};
 use crate::resources::PlayerStateResource;
 use crate::resources::TimeResource;
-use crate::models::CellValue;
+use crate::models::cell::CellValue;
 
 // 色の定義
 const COLOR_BACKGROUND: &str = "#f0f0f0";

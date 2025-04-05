@@ -13,7 +13,8 @@ use std::rc::Rc;
 use js_sys::{Math, Object, Reflect, Date};
 
 use crate::js_bindings::{log, update_connection_status, update_player_count, update_game_status};
-use crate::models::{CellValue, Screen, Player};
+use crate::models::{Screen, Player};
+use crate::models::cell::CellValue;
 use crate::utils::get_cell_index_from_coordinates;
 use crate::rendering::{Renderer, DrawOptions, GameRenderer};
 use crate::network::{NetworkManager, MessageCallback};
