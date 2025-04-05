@@ -11,6 +11,8 @@ use crate::events::game_events::{GameEndEvent, GameStateChangeEvent, GameState};
 use crate::models::cell::CellValue;
 use crate::systems::{EventSystemTrait, EventSystem};
 use crate::system::system_registry::{System, SystemPhase};
+use crate::board::Board;
+use wasm_bindgen::JsValue;
 
 /// セル公開ハンドラシステム
 pub struct CellRevealHandlerSystem {
@@ -106,67 +108,43 @@ impl CellRevealHandlerSystem {
                 );
             },
             CellValue::Empty(0) => {
+                // 公開前の状態を保存
+                let pre_revealed_count = revealed_cells_count;
+                
                 // 空白セルの場合、周囲のセルも公開（チェーン反応）
-                // 周囲の座標を計算
-                let mut connected_cells = Vec::new();
-                let mut revealed_cells = Vec::new();
+                // 最適化されたイテレーティブアルゴリズムを使用
+                let _ = reveal_connected_cells_iterative(coord.row as usize, coord.col as usize, board);
                 
-                // 周囲8方向のセルを追加
-                for row_offset in -1..=1 {
-                    for col_offset in -1..=1 {
-                        // 自分自身はスキップ
-                        if row_offset == 0 && col_offset == 0 {
-                            continue;
-                        }
-                        
-                        let new_row = coord.row as i32 + row_offset;
-                        let new_col = coord.col as i32 + col_offset;
-                        
-                        // ボードの範囲内かチェック
-                        if new_row >= 0 && new_row < board.height as i32 &&
-                           new_col >= 0 && new_col < board.width as i32 {
-                            connected_cells.push(crate::models::coordinate::Coordinate::new(new_row as u32, new_col as u32));
-                        }
-                    }
-                }
+                // 公開後のセル数を再計算
+                let new_revealed_count = board.revealed.iter().filter(|&&revealed| revealed).count();
                 
-                // 周囲のセルを公開
-                for connected_coord in connected_cells {
-                    let connected_index = connected_coord.row as usize * board.width + connected_coord.col as usize;
+                // 複数のセルが公開された場合にイベントを発行
+                if new_revealed_count > pre_revealed_count {
+                    // 公開されたセルのリストを作成
+                    let mut revealed_cells = Vec::new();
                     
-                    // まだ公開されておらず、フラグが立っていないセルのみ公開
-                    if !board.revealed[connected_index] && !board.flagged[connected_index] {
-                        // セルを公開
-                        board.revealed[connected_index] = true;
-                        
-                        // 公開したセルとその値を記録
-                        revealed_cells.push((connected_coord.clone(), board.cells[connected_index].clone()));
-                        
-                        // 周囲のセルが空白なら、さらにその周囲も公開（再帰的に処理）
-                        if let CellValue::Empty(0) = board.cells[connected_index] {
-                            // 実際の実装では、ここで再帰的に処理するか、イテレーティブなアルゴリズムを使用
-                            // 簡略化のため、ここではチェーン反応イベントを発行するのみ
-                            self.publish_event(
-                                CellRevealedEvent {
-                                    coord: connected_coord,
-                                    value: CellValue::Empty(0),
-                                    is_chain: true,
-                                },
-                                resources
-                            );
+                    // 全てのセルをスキャンして新たに公開されたセルを見つける
+                    for row in 0..board.height {
+                        for col in 0..board.width {
+                            let idx = row * board.width + col;
+                            // 新たに公開されたセルのみを対象にする
+                            if board.revealed[idx] && idx != index {
+                                let cell_coord = crate::models::coordinate::Coordinate::new(row as u32, col as u32);
+                                revealed_cells.push((cell_coord, board.cells[idx].clone()));
+                            }
                         }
                     }
-                }
-                
-                // 一括公開イベントを発行
-                if !revealed_cells.is_empty() {
-                    self.publish_event(
-                        MultipleCellsRevealedEvent {
-                            revealed_cells,
-                            is_chain: true,
-                        },
-                        resources
-                    );
+                    
+                    // 一括公開イベントを発行
+                    if !revealed_cells.is_empty() {
+                        self.publish_event(
+                            MultipleCellsRevealedEvent {
+                                revealed_cells,
+                                is_chain: true,
+                            },
+                            resources
+                        );
+                    }
                 }
             },
             _ => {
@@ -271,4 +249,103 @@ impl EventSystemTrait for CellRevealHandlerSystem {
     fn get_handler_ids_mut(&mut self) -> &mut Arc<Mutex<HashMap<String, u64>>> {
         self.event_system.get_handler_ids_mut()
     }
+}
+
+/**
+ * 連鎖的なセル公開処理（イテレーティブアルゴリズム、最適化版）
+ * 再帰処理ではなくキューを使って処理することでスタックオーバーフローを防止
+ */
+fn reveal_connected_cells_iterative(
+    row: usize,
+    col: usize,
+    board: &mut Board
+) -> Result<(), JsValue> {
+    use std::collections::VecDeque;
+    
+    let width = board.width;
+    let height = board.height;
+    let total_cells = width * height;
+    
+    // ビジットマーカーとして使用するビットセット（効率的なメモリ使用）
+    let mut visited = vec![false; total_cells];
+    
+    // 行オフセットのプリフェッチキャッシュ
+    let mut row_offsets = Vec::with_capacity(height);
+    for r in 0..height {
+        row_offsets.push(r * width);
+    }
+    
+    // 開始セルのインデックス
+    let start_index = row_offsets[row] + col;
+    
+    // 既に開かれているかチェック
+    if board.revealed[start_index] {
+        return Ok(());
+    }
+    
+    // 効率的なキューの初期化 - ほとんどのケースでは全セルの20%以下しか訪問しない
+    let mut queue = VecDeque::with_capacity(total_cells / 5);
+    queue.push_back(start_index);
+    
+    // 隣接インデックスのための方向オフセット配列
+    let directions = [
+        (-1, -1), // 左上
+        (-1,  0), // 上
+        (-1,  1), // 右上
+        ( 0, -1), // 左
+        ( 0,  1), // 右
+        ( 1, -1), // 左下
+        ( 1,  0), // 下
+        ( 1,  1)  // 右下
+    ];
+    
+    while let Some(current_index) = queue.pop_front() {
+        // 既に訪問済みならスキップ
+        if visited[current_index] {
+            continue;
+        }
+        
+        // 訪問済みとしてマーク
+        visited[current_index] = true;
+        
+        // 既に開かれているかフラグがたっているなら無視
+        if board.revealed[current_index] || board.flagged[current_index] {
+            continue;
+        }
+        
+        // セルを開く
+        board.revealed[current_index] = true;
+        
+        // 空のセル（値が0）でなければこのセルの処理は終了
+        if let CellValue::Empty(0) = board.cells[current_index] {
+            // このセルは空なので周囲を探索
+            
+            // インデックスから行と列を逆算
+            let row = current_index / width;
+            let col = current_index % width;
+            
+            // 隣接セルをチェック - キャッシュフレンドリーな順序で
+            for &(row_delta, col_delta) in &directions {
+                let new_row = row as isize + row_delta;
+                let new_col = col as isize + col_delta;
+                
+                // 範囲チェック
+                if new_row < 0 || new_row >= height as isize || 
+                   new_col < 0 || new_col >= width as isize {
+                    continue;
+                }
+                
+                let new_row = new_row as usize;
+                let new_col = new_col as usize;
+                let new_index = row_offsets[new_row] + new_col;
+                
+                // まだキューに入っていなければ追加
+                if !visited[new_index] && !board.revealed[new_index] && !board.flagged[new_index] {
+                    queue.push_back(new_index);
+                }
+            }
+        }
+    }
+    
+    Ok(())
 } 

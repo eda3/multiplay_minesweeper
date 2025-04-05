@@ -101,85 +101,102 @@ pub fn reveal_cell(
 }
 
 /// 連鎖的なセル公開を非再帰的に処理する関数
+/// スーパー最適化バージョン - メモリアクセスパターンとキャッシュ効率を向上
 fn reveal_connected_cells_iterative(
     start_row: usize,
     start_col: usize,
-    entity_manager: &mut EntityManager,
+    _entity_manager: &mut EntityManager,
     board: &mut Board
 ) -> Result<(), JsValue> {
-    // キューを使って処理するセルを管理（事前に容量確保）
-    let estimated_capacity = (board.width * board.height) / 4; // 盤面の25%の容量を事前確保
-    let mut queue = VecDeque::with_capacity(estimated_capacity);
+    use std::collections::VecDeque;
     
-    // 処理済みセルを記録するセット（こちらも事前に容量確保）
-    let mut visited = HashSet::with_capacity(estimated_capacity);
-    
-    // 開始セルをキューに追加
-    queue.push_back((start_row, start_col));
-    
-    // 隣接セル座標用のバッファを事前に確保（再利用）
-    let mut adjacent_buffer = Vec::with_capacity(8);
-    
-    // インデックス計算をキャッシュするためのルックアップテーブル
-    // 各行の先頭インデックスを事前計算
-    let mut row_offset_cache = Vec::with_capacity(board.height);
-    for row in 0..board.height {
-        row_offset_cache.push(row * board.width);
-    }
-    
-    // よく使う値をローカル変数にキャッシュ
     let width = board.width;
     let height = board.height;
+    let total_cells = width * height;
     
-    // バッチ処理のために開くセルを蓄積
-    let mut cells_to_reveal = Vec::with_capacity(estimated_capacity);
+    // ビジットマーカーとして使用するビットセット
+    // HashSetより効率的なメモリ使用と高速な検索
+    let mut visited = vec![false; total_cells];
     
-    while let Some((row, col)) = queue.pop_front() {
-        // セルのインデックスを事前計算したキャッシュを使って計算（乗算を回避）
-        let index = row_offset_cache[row] + col;
-        
-        // 既に処理済みならスキップ - キャッシュヒット率を上げるため早めにチェック
-        if !visited.insert(index) {
+    // 行オフセットのプリフェッチキャッシュ
+    let mut row_offsets = Vec::with_capacity(height);
+    for row in 0..height {
+        row_offsets.push(row * width);
+    }
+    
+    // 開始セルのインデックス
+    let start_index = row_offsets[start_row] + start_col;
+    
+    // 既に開かれているかチェック
+    if board.revealed[start_index] {
+        return Ok(());
+    }
+    
+    // 効率的なキューの初期化 - ほとんどのケースでは全セルの20%以下しか訪問しない
+    let mut queue = VecDeque::with_capacity(total_cells / 5);
+    queue.push_back(start_index);
+    
+    // 隣接インデックスのための方向オフセット配列
+    // (row_delta, col_delta)のタプルの配列に変更
+    let directions = [
+        (-1, -1), // 左上
+        (-1,  0), // 上
+        (-1,  1), // 右上
+        ( 0, -1), // 左
+        ( 0,  1), // 右
+        ( 1, -1), // 左下
+        ( 1,  0), // 下
+        ( 1,  1)  // 右下
+    ];
+    
+    // キャッシュヒット率を最大化する処理順序
+    while let Some(current_index) = queue.pop_front() {
+        // 既に訪問済みならスキップ
+        if visited[current_index] {
             continue;
         }
         
-        // 周囲のセルを取得して処理
-        adjacent_buffer.clear(); // バッファを再利用
-        get_adjacent_cells_cached(row, col, width, height, &row_offset_cache, &mut adjacent_buffer);
+        // 訪問済みとしてマーク
+        visited[current_index] = true;
         
-        // 隣接セルの一括処理の準備
-        let mut local_cells_to_enqueue = Vec::with_capacity(8);
-        
-        // 隣接セルの一括処理
-        for &(adj_row, adj_col, adj_index) in &adjacent_buffer {
-            // 既に処理済みならスキップ（早期チェック）
-            if visited.contains(&adj_index) {
-                continue;
-            }
-            
-            // 既に開いているセルや旗が立てられているセルは無視
-            if board.revealed[adj_index] || board.flagged[adj_index] {
-                continue;
-            }
-            
-            // セルを蓄積（バッチ処理用）
-            cells_to_reveal.push(adj_index);
-            
-            // 周囲に地雷がない空のセルなら、後でキューに追加するリストに加える
-            if let CellValue::Empty(0) = board.cells[adj_index] {
-                local_cells_to_enqueue.push((adj_row, adj_col));
-            }
+        // 既に開かれているかフラグがたっているなら無視
+        if board.revealed[current_index] || board.flagged[current_index] {
+            continue;
         }
         
-        // 一括で処理する
-        for &idx in &cells_to_reveal {
-            board.revealed[idx] = true;
-            board.remaining_safe_cells -= 1;
-        }
-        cells_to_reveal.clear();
+        // セルを開く
+        board.revealed[current_index] = true;
+        board.remaining_safe_cells -= 1;
         
-        // バッチでキューに追加
-        queue.extend(local_cells_to_enqueue);
+        // 空のセル（値が0）でなければこのセルの処理は終了
+        if let CellValue::Empty(0) = board.cells[current_index] {
+            // このセルは空なので周囲を探索
+            
+            // インデックスから行と列を逆算
+            let row = current_index / width;
+            let col = current_index % width;
+            
+            // 隣接セルをチェック - キャッシュフレンドリーな順序で
+            for &(row_delta, col_delta) in &directions {
+                let new_row = row as isize + row_delta;
+                let new_col = col as isize + col_delta;
+                
+                // 範囲チェック
+                if new_row < 0 || new_row >= height as isize || 
+                   new_col < 0 || new_col >= width as isize {
+                    continue;
+                }
+                
+                let new_row = new_row as usize;
+                let new_col = new_col as usize;
+                let new_index = row_offsets[new_row] + new_col;
+                
+                // まだキューに入っていなければ追加
+                if !visited[new_index] && !board.revealed[new_index] && !board.flagged[new_index] {
+                    queue.push_back(new_index);
+                }
+            }
+        }
     }
     
     Ok(())

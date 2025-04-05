@@ -1717,3 +1717,456 @@ fn setup_cross_pattern_mines(board: &mut Board) {
         }
     }
 }
+
+/// エッジケーステスト用関数 - 非対称形状と偏った地雷配置
+#[bench]
+fn test_edge_case_asymmetric_shapes(b: &mut Bencher) {
+    b.iter(|| {
+        println!("===== 非対称形状と偏った地雷配置テスト =====");
+        
+        // 非対称ボードと偏った地雷配置の設定
+        let configs = [
+            (20, 5, "横長ボード"),       // 極端に横長
+            (5, 20, "縦長ボード"),       // 極端に縦長
+            (10, 10, "コーナー密集地雷"), // 左上コーナーに地雷が密集
+            (10, 10, "端部密集地雷"),    // 右端に地雷が密集
+        ];
+        
+        println!("| ボードタイプ | サイズ | 非再帰結果 | 最適化結果 | 公開セル数 |");
+        println!("|------------|-------|--------|--------|--------|");
+        
+        for (i, (width, height, pattern_name)) in configs.iter().enumerate() {
+            println!("テスト: {}x{} ボード - {}", width, height, pattern_name);
+            
+            // 非再帰アルゴリズム（通常版）
+            let iterative_revealed;
+            {
+                let mut board = Board::new(*width, *height, 0, 30.0); // 地雷数は後で設定
+                let mut entity_manager = EntityManager::new();
+                
+                // 特殊な地雷配置
+                match i {
+                    0 => { // 横長ボード
+                        // 左側に地雷を配置
+                        for row in 0..height {
+                            for col in 0..(width/4) {
+                                let idx = row * width + col;
+                                board.cells[idx] = CellValue::Mine;
+                            }
+                        }
+                    },
+                    1 => { // 縦長ボード
+                        // 上側に地雷を配置
+                        for row in 0..(height/4) {
+                            for col in 0..width {
+                                let idx = row * width + col;
+                                board.cells[idx] = CellValue::Mine;
+                            }
+                        }
+                    },
+                    2 => { // コーナー密集地雷
+                        // 左上コーナーに地雷を密集
+                        for row in 0..(height/3) {
+                            for col in 0..(width/3) {
+                                let idx = row * width + col;
+                                board.cells[idx] = CellValue::Mine;
+                            }
+                        }
+                    },
+                    3 => { // 端部密集地雷
+                        // 右端全体に地雷を配置
+                        for row in 0..height {
+                            for col in (width*3/4)..width {
+                                let idx = row * width + col;
+                                board.cells[idx] = CellValue::Mine;
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+                
+                // 実際の地雷数をカウント
+                let mine_count = board.cells.iter().filter(|&&cell| {
+                    matches!(cell, CellValue::Mine)
+                }).count();
+                board.mine_count = mine_count;
+                
+                // 数字を計算
+                calculate_numbers(&mut board);
+                
+                // セーフなセル数を設定
+                board.remaining_safe_cells = width * height - mine_count;
+                
+                // 最適な開始位置を選択（地雷が少ない部分）
+                let (start_row, start_col) = match i {
+                    0 => (height / 2, width * 3 / 4),  // 横長ボードは右側から開始
+                    1 => (height * 3 / 4, width / 2),  // 縦長ボードは下側から開始
+                    2 => (height * 2 / 3, width * 2 / 3), // コーナー密集地雷は右下から開始
+                    3 => (height / 2, width / 4),      // 端部密集地雷は左側から開始
+                    _ => (height / 2, width / 2),
+                };
+                
+                println!("  開始位置: ({}, {})", start_row, start_col);
+                
+                // 非再帰アルゴリズムでセルを開く
+                let start = std::time::Instant::now();
+                let result = bench_reveal_cell(start_row, start_col, &mut entity_manager, &mut board, false);
+                let duration = start.elapsed();
+                
+                let revealed = board.revealed.iter().filter(|&&r| r).count();
+                iterative_revealed = revealed;
+                
+                println!("  非再帰: {}us, 公開セル数: {}, 結果: {:?}", 
+                    duration.as_micros(), revealed, result);
+                    
+                // ボード状態を表示
+                print_board_state(&board);
+            }
+            
+            // 最適化アルゴリズム
+            let optimized_revealed;
+            {
+                let mut board = Board::new(*width, *height, 0, 30.0); // 地雷数は後で設定
+                
+                // 特殊な地雷配置（上と同じ）
+                match i {
+                    0 => { // 横長ボード
+                        for row in 0..height {
+                            for col in 0..(width/4) {
+                                let idx = row * width + col;
+                                board.cells[idx] = CellValue::Mine;
+                            }
+                        }
+                    },
+                    1 => { // 縦長ボード
+                        for row in 0..(height/4) {
+                            for col in 0..width {
+                                let idx = row * width + col;
+                                board.cells[idx] = CellValue::Mine;
+                            }
+                        }
+                    },
+                    2 => { // コーナー密集地雷
+                        for row in 0..(height/3) {
+                            for col in 0..(width/3) {
+                                let idx = row * width + col;
+                                board.cells[idx] = CellValue::Mine;
+                            }
+                        }
+                    },
+                    3 => { // 端部密集地雷
+                        for row in 0..height {
+                            for col in (width*3/4)..width {
+                                let idx = row * width + col;
+                                board.cells[idx] = CellValue::Mine;
+                            }
+                        }
+                    },
+                    _ => {}
+                }
+                
+                // 実際の地雷数をカウント
+                let mine_count = board.cells.iter().filter(|&&cell| {
+                    matches!(cell, CellValue::Mine)
+                }).count();
+                board.mine_count = mine_count;
+                
+                // 数字を計算
+                calculate_numbers(&mut board);
+                
+                // セーフなセル数を設定
+                board.remaining_safe_cells = width * height - mine_count;
+                
+                // 最適な開始位置を選択（地雷が少ない部分）
+                let (start_row, start_col) = match i {
+                    0 => (height / 2, width * 3 / 4),  // 横長ボードは右側から開始
+                    1 => (height * 3 / 4, width / 2),  // 縦長ボードは下側から開始
+                    2 => (height * 2 / 3, width * 2 / 3), // コーナー密集地雷は右下から開始
+                    3 => (height / 2, width / 4),      // 端部密集地雷は左側から開始
+                    _ => (height / 2, width / 2),
+                };
+                
+                // 最適化アルゴリズムでセルを開く
+                let start = std::time::Instant::now();
+                let result = optimized_reveal_cell(start_row, start_col, &mut board, false);
+                let duration = start.elapsed();
+                
+                let revealed = board.revealed.iter().filter(|&&r| r).count();
+                optimized_revealed = revealed;
+                
+                println!("  最適化: {}us, 公開セル数: {}, 結果: {:?}", 
+                    duration.as_micros(), revealed, result);
+            }
+            
+            println!("| {} | {}x{} | OK | OK | {} |", 
+                pattern_name, width, height, iterative_revealed);
+            
+            // 結果が同じであることを確認
+            assert_eq!(iterative_revealed, optimized_revealed, 
+                "{}での公開セル数が一致しません", pattern_name);
+                
+            println!(""); // 空行
+        }
+        
+        println!("===== 非対称形状と偏った地雷配置テスト 完了 =====");
+    });
+}
+
+/// さらに最適化されたキャッシュとメモリアクセスパターンを使用したバージョン
+fn reveal_connected_cells_super_optimized(
+    start_row: usize,
+    start_col: usize,
+    board: &mut Board
+) -> Result<(), JsValue> {
+    use std::collections::VecDeque;
+    
+    let width = board.width;
+    let height = board.height;
+    let total_cells = width * height;
+    
+    // ビジットマーカーとして使用するビットセット
+    // Vecよりもより効率的なメモリ使用と高速な検索
+    let mut visited = vec![false; total_cells];
+    
+    // 行オフセットのプリフェッチキャッシュ
+    let mut row_offsets = Vec::with_capacity(height);
+    for row in 0..height {
+        row_offsets.push(row * width);
+    }
+    
+    // 開始セルのインデックス
+    let start_index = row_offsets[start_row] + start_col;
+    
+    // 既に開かれているかチェック
+    if board.revealed[start_index] {
+        return Ok(());
+    }
+    
+    // 効率的なキューの初期化 - ほとんどのケースでは全セルの20%以下しか訪問しない
+    let mut queue = VecDeque::with_capacity(total_cells / 5);
+    queue.push_back(start_index);
+    
+    // 隣接インデックスのための方向オフセット配列をプリコンパイル
+    // (row_delta, col_delta, condition_lambda) の形式
+    let neighbors = [
+        (-1, -1, |r: usize, c: usize| r > 0 && c > 0),                 // 左上
+        (-1,  0, |r: usize, _: usize| r > 0),                          // 上
+        (-1,  1, |r: usize, c: usize| r > 0 && c < width - 1),         // 右上
+        ( 0, -1, |_: usize, c: usize| c > 0),                          // 左
+        ( 0,  1, |_: usize, c: usize| c < width - 1),                  // 右
+        ( 1, -1, |r: usize, c: usize| r < height - 1 && c > 0),        // 左下
+        ( 1,  0, |r: usize, _: usize| r < height - 1),                 // 下
+        ( 1,  1, |r: usize, c: usize| r < height - 1 && c < width - 1) // 右下
+    ];
+    
+    // キャッシュヒット率を最大化する処理順序
+    while let Some(current_index) = queue.pop_front() {
+        // 既に訪問済みならスキップ
+        if visited[current_index] {
+            continue;
+        }
+        
+        // 訪問済みとしてマーク
+        visited[current_index] = true;
+        
+        // 既に開かれているかフラグがたっているなら無視
+        if board.revealed[current_index] || board.flagged[current_index] {
+            continue;
+        }
+        
+        // セルを開く
+        board.revealed[current_index] = true;
+        board.remaining_safe_cells -= 1;
+        
+        // 空のセル（値が0）でなければこのセルの処理は終了
+        if let CellValue::Empty(0) = board.cells[current_index] {
+            // このセルは空なので周囲を探索
+            
+            // インデックスから行と列を逆算
+            let row = current_index / width;
+            let col = current_index % width;
+            
+            // 隣接セルをチェック - キャッシュフレンドリーな順序で
+            for &(row_delta, col_delta, condition) in &neighbors {
+                if !condition(row, col) {
+                    continue;
+                }
+                
+                let new_row = (row as isize + row_delta) as usize;
+                let new_col = (col as isize + col_delta) as usize;
+                let new_index = row_offsets[new_row] + new_col;
+                
+                // まだキューに入っていなければ追加
+                if !visited[new_index] && !board.revealed[new_index] && !board.flagged[new_index] {
+                    queue.push_back(new_index);
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// スーパー最適化されたセル公開関数
+fn super_optimized_reveal_cell(
+    row: usize,
+    col: usize,
+    board: &mut Board,
+    is_first_click: bool
+) -> Result<bool, JsValue> {
+    // インデックスを計算
+    let index = row * board.width + col;
+    
+    // 既に開いているセルや旗が立てられているセルは無視
+    if board.revealed[index] || board.flagged[index] {
+        return Ok(false);
+    }
+
+    // セルを開く
+    board.revealed[index] = true;
+
+    // 地雷をクリックした場合
+    if let CellValue::Mine = board.cells[index] {
+        // ゲームオーバー
+        board.game_over = true;
+        return Ok(true); // 爆発を示すtrueを返す
+    }
+
+    // 残りの安全なセル数を減らす
+    board.remaining_safe_cells -= 1;
+
+    // 周囲の地雷がない場合は周囲のセルも開く
+    if let CellValue::Empty(0) = board.cells[index] {
+        reveal_connected_cells_super_optimized(row, col, board)?;
+    }
+
+    // 勝利条件をチェック
+    if check_win_condition(board) {
+        board.win = true;
+    }
+
+    Ok(false) // 爆発しなかったのでfalseを返す
+}
+
+/// 最適化バージョンのベンチマーク
+#[bench]
+fn bench_super_optimized_reveal_small(b: &mut Bencher) {
+    let width = 10;
+    let height = 10;
+    let mine_count = 10;
+    
+    b.iter(|| {
+        // 標準テストボードのセットアップ
+        let mut board = Board::new(width, height, mine_count, 30.0);
+        
+        // 地雷を配置
+        for i in 0..mine_count {
+            board.cells[i] = CellValue::Mine;
+        }
+        
+        // 数字を計算
+        calculate_numbers(&mut board);
+        
+        // 連鎖反応が起きる位置を探す
+        let reveal_pos = find_chain_reaction_position(&board);
+        
+        // スーパー最適化された公開関数を使用
+        let _ = super_optimized_reveal_cell(reveal_pos.0, reveal_pos.1, &mut board, false);
+    });
+}
+
+/// 3つのアルゴリズムを並べて比較するパフォーマンステスト
+#[test]
+#[ignore] // 通常のテスト実行では除外し、明示的に指定した場合のみ実行
+fn test_super_optimized_performance_comparison() {
+    println!("\n===== パフォーマンス比較テスト =====");
+    
+    // ボードサイズ設定
+    let configs = [
+        (10, 10, 10, "小ボード"),
+        (20, 20, 40, "中ボード"),
+        (30, 30, 90, "大ボード"),
+        (50, 50, 250, "超大ボード")
+    ];
+    
+    println!("| ボードサイズ | イテレーティブ | 最適化 | スーパー最適化 | 改善率 |");
+    println!("|------------|------------|-------|------------|-------|");
+    
+    for (width, height, mine_count, name) in configs {
+        println!("\n## {} ({}x{}, 地雷{}個) ##", name, width, height, mine_count);
+        
+        // 標準テストボードのセットアップ
+        let mut board = Board::new(width, height, mine_count, 30.0);
+        let mut entity_manager = EntityManager::new();
+        
+        // 地雷をランダムに配置
+        let mut rng = rand::thread_rng();
+        let mut mines_placed = 0;
+        
+        while mines_placed < mine_count {
+            let idx = rng.gen_range(0, width * height);
+            if let CellValue::Empty(_) = board.cells[idx] {
+                board.cells[idx] = CellValue::Mine;
+                mines_placed += 1;
+            }
+        }
+        
+        // 数字を計算
+        calculate_numbers(&mut board);
+        
+        // 連鎖反応が起きる位置を探す
+        let reveal_pos = find_chain_reaction_position(&board);
+        println!("連鎖反応の開始位置: ({}, {})", reveal_pos.0, reveal_pos.1);
+        
+        // 以下、3つのアルゴリズムでテスト
+        
+        // 1. イテレーティブアルゴリズム
+        let mut board_iterative = board.clone();
+        let mut entity_manager_clone = entity_manager.clone();
+        
+        let start = std::time::Instant::now();
+        let _ = bench_reveal_cell(reveal_pos.0, reveal_pos.1, &mut entity_manager_clone, &mut board_iterative, false);
+        let iterative_duration = start.elapsed();
+        let iterative_us = iterative_duration.as_micros();
+        let iterative_revealed = board_iterative.revealed.iter().filter(|&&r| r).count();
+        
+        println!("イテレーティブ: {}us, 公開セル数: {}", iterative_us, iterative_revealed);
+        
+        // 2. 最適化アルゴリズム
+        let mut board_optimized = board.clone();
+        
+        let start = std::time::Instant::now();
+        let _ = optimized_reveal_cell(reveal_pos.0, reveal_pos.1, &mut board_optimized, false);
+        let optimized_duration = start.elapsed();
+        let optimized_us = optimized_duration.as_micros();
+        let optimized_revealed = board_optimized.revealed.iter().filter(|&&r| r).count();
+        
+        println!("最適化: {}us, 公開セル数: {}", optimized_us, optimized_revealed);
+        
+        // 3. スーパー最適化アルゴリズム
+        let mut board_super = board.clone();
+        
+        let start = std::time::Instant::now();
+        let _ = super_optimized_reveal_cell(reveal_pos.0, reveal_pos.1, &mut board_super, false);
+        let super_duration = start.elapsed();
+        let super_us = super_duration.as_micros();
+        let super_revealed = board_super.revealed.iter().filter(|&&r| r).count();
+        
+        println!("スーパー最適化: {}us, 公開セル数: {}", super_us, super_revealed);
+        
+        // 基本アルゴリズムからの改善率
+        let improvement1 = (1.0 - (optimized_us as f64 / iterative_us as f64)) * 100.0;
+        let improvement2 = (1.0 - (super_us as f64 / iterative_us as f64)) * 100.0;
+        
+        println!("改善率: 最適化: {:.1}%, スーパー最適化: {:.1}%", improvement1, improvement2);
+        
+        // 全アルゴリズムの結果が同じことを確認
+        assert_eq!(iterative_revealed, optimized_revealed, "最適化アルゴリズムの結果不一致");
+        assert_eq!(iterative_revealed, super_revealed, "スーパー最適化アルゴリズムの結果不一致");
+        
+        println!("|{}|{}us|{}us|{}us|{:.1}%|", 
+            name, iterative_us, optimized_us, super_us, improvement2);
+    }
+    
+    println!("\n===== パフォーマンス比較テスト 完了 =====");
+}
