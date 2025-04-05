@@ -162,6 +162,10 @@ pub fn init_game(canvas_id: &str) -> Result<(), JsValue> {
     // パニックハンドラを設定
     console_error_panic_hook::set_once();
     
+    // ロガーを初期化
+    wasm_logger::init(wasm_logger::Config::default());
+    log::info!("Wasm logger initialized");
+    
     // TODO: ECSベースのゲーム初期化を実装
     // 一時的な空実装
     log("ECS based game initialization is not implemented yet.");
