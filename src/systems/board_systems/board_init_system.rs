@@ -126,19 +126,19 @@ fn initialize_board_grid(
                 row,
                 col,
             };
-            entity_manager.add_component(cell_entity, position);
+            let _ = entity_manager.add_component(cell_entity, position);
             
             // セル状態コンポーネントを追加（初期状態は隠れている）
             let cell_state = CellStateComponent {
                 state: CellState::Hidden,
             };
-            entity_manager.add_component(cell_entity, cell_state);
+            let _ = entity_manager.add_component(cell_entity, cell_state);
             
             // セルの内容コンポーネントを追加（初期状態は空）
             let cell_content = CellContentComponent {
                 value: CellValue::Empty(0),
             };
-            entity_manager.add_component(cell_entity, cell_content);
+            let _ = entity_manager.add_component(cell_entity, cell_content);
             
             // エンティティIDをグリッドに登録
             board_state.cell_grid.insert((row, col), cell_entity);

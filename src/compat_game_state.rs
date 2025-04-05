@@ -508,9 +508,9 @@ impl CompatGameState {
             
             // マウスボタンの状態も更新
             if self.mouse_down {
-                player_state.set_mouse_state(MouseState::LeftDown);
+                player_state.set_mouse_state(MouseState::LEFT_DOWN);
             } else {
-                player_state.set_mouse_state(MouseState::Up);
+                player_state.set_mouse_state(MouseState::UP);
             }
         }
         
@@ -723,7 +723,7 @@ impl CompatGameState {
         
         // PlayerStateResourceも更新
         if let Some(player_state) = self.ecs_game.get_resource_mut::<PlayerStateResource>() {
-            player_state.set_mouse_state(if down { MouseState::LeftDown } else { MouseState::Up });
+            player_state.set_mouse_state(if down { MouseState::LEFT_DOWN } else { MouseState::UP });
         }
     }
     

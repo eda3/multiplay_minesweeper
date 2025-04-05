@@ -212,7 +212,7 @@ impl System for CellRevealSystem {
                 player_state_ref.downcast_ref::<PlayerStateResource>()
             ) {
                 // マウスが左クリックされた時だけ処理
-                if player.mouse_state.get_state() != MouseState::LeftDown {
+                if player.mouse_state.get_state() != MouseState::LEFT_DOWN {
                     return SystemResult::Ok;
                 }
                 

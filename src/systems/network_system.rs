@@ -389,7 +389,7 @@ fn handle_cells_revealed(data: &js_sys::Object, board: &mut BoardResource) {
             for i in 0..len {
                 if let Some(cell_index) = cells_array.get(i).as_f64() {
                     // セルを公開
-                    board.reveal_cell(cell_index as usize);
+                    let _ = board.reveal_cell(cell_index as usize);
                 }
             }
         }

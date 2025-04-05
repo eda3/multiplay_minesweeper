@@ -83,21 +83,21 @@ impl MouseState {
     }
 
     // 互換性のための定数
-    pub const LeftDown: &'static str = "LeftDown";
-    pub const RightDown: &'static str = "RightDown";
-    pub const MiddleDown: &'static str = "MiddleDown";
-    pub const Up: &'static str = "Up";
+    pub const LEFT_DOWN: &'static str = "LeftDown";
+    pub const RIGHT_DOWN: &'static str = "RightDown";
+    pub const MIDDLE_DOWN: &'static str = "MiddleDown";
+    pub const UP: &'static str = "Up";
     
     /// マウスの状態文字列を取得（互換性のため）
     pub fn get_state(&self) -> &'static str {
         if self.left_button {
-            Self::LeftDown
+            Self::LEFT_DOWN
         } else if self.right_button {
-            Self::RightDown
+            Self::RIGHT_DOWN
         } else if self.middle_button {
-            Self::MiddleDown
+            Self::MIDDLE_DOWN
         } else {
-            Self::Up
+            Self::UP
         }
     }
 } 

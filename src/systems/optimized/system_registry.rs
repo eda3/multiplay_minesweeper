@@ -219,7 +219,7 @@ impl SystemRegistry {
         // 安全でない静的可変参照を使用する必要がある
         // この場合は単一のスレッドでのみ使用されるため安全
         unsafe {
-            let mut batch = ResourceBatchMut { resource: &mut EMPTY_RESOURCE as &mut dyn Resource };
+            let mut batch = ResourceBatchMut { resource: &mut *(&raw mut EMPTY_RESOURCE as *mut dyn Resource) };
             f(&mut batch)
         }
     }

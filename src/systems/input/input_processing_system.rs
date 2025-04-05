@@ -84,7 +84,7 @@ impl System for InputProcessingSystem {
             
             // マウスボタン状態の更新と対応するイベント発行
             if input.is_mouse_down(0) {
-                player_state.set_mouse_state(MouseState::LeftDown);
+                player_state.set_mouse_state(MouseState::LEFT_DOWN);
                 
                 // マウス位置からセル座標を計算（仮の実装）
                 // 実際にはボードのサイズやセルサイズを考慮する必要がある
@@ -96,7 +96,7 @@ impl System for InputProcessingSystem {
                     event_queue.push_event(GameEvent::CellReveal(cell_y, cell_x));
                 }
             } else if input.is_mouse_down(2) {
-                player_state.set_mouse_state(MouseState::RightDown);
+                player_state.set_mouse_state(MouseState::RIGHT_DOWN);
                 
                 // マウス位置からセル座標を計算
                 let cell_x = (x as f64 / 30.0).floor() as usize;
@@ -107,9 +107,9 @@ impl System for InputProcessingSystem {
                     event_queue.push_event(GameEvent::FlagToggle(cell_y, cell_x));
                 }
             } else if input.is_mouse_down(1) {
-                player_state.set_mouse_state(MouseState::MiddleDown);
+                player_state.set_mouse_state(MouseState::MIDDLE_DOWN);
             } else {
-                player_state.set_mouse_state(MouseState::Up);
+                player_state.set_mouse_state(MouseState::UP);
             }
             
             // マウス移動イベントの発行

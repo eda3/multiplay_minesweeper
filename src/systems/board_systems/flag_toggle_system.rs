@@ -104,7 +104,7 @@ impl System for FlagToggleSystem {
         };
         
         // マウスの右ボタンが押されていない場合は何もしない
-        if player_state.mouse_state.get_state() != MouseStateState::RightDown {
+        if player_state.mouse_state.get_state() != MouseState::RIGHT_DOWN {
             return SystemResult::Ok;
         }
         

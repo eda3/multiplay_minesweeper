@@ -150,11 +150,11 @@ impl PlayerStateResource {
     
     /// マウスの状態を設定（互換性のため）
     pub fn set_mouse_state(&mut self, state: &str) {
-        if state == MouseState::LeftDown {
+        if state == MouseState::LEFT_DOWN {
             self.mouse_state.left_button = true;
-        } else if state == MouseState::RightDown {
+        } else if state == MouseState::RIGHT_DOWN {
             self.mouse_state.right_button = true;
-        } else if state == MouseState::MiddleDown {
+        } else if state == MouseState::MIDDLE_DOWN {
             self.mouse_state.middle_button = true;
         } else {
             // Up状態の場合はすべてのボタンを解放
