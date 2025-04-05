@@ -1,18 +1,30 @@
 /**
  * ネットワークシステム
  * 
- * WebSocket通信を担当するシステム
+ * ウェブソケット通信を処理するシステム
  */
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use wasm_bindgen::JsValue;
 use serde::{Serialize, Deserialize};
+use web_sys::CanvasRenderingContext2d;
+use std::any::Any;
+use wasm_bindgen::JsCast;
+use web_sys::{WebSocket, MessageEvent, CloseEvent};
+use web_sys::console;
+use serde_json::Value;
 
-use crate::entities::EntityManager;
+use crate::entities::{EntityManager, Entity, EntityId};
 use crate::systems::system_registry::DeltaTime;
-use crate::resources::{NetworkResource, PlayerResource, BoardResource};
-use crate::components::{Position, Player};
+use crate::resources::{
+    NetworkResource, 
+    PlayerStateResource, 
+    BoardResource, 
+    GameStateResource
+};
+use crate::components::{Position, player::Player};
+use crate::resources::Resource;
 
 /// ネットワークメッセージタイプ
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -39,363 +51,433 @@ pub struct NetworkMessage {
     pub y: Option<f64>,
 }
 
-/// ネットワークシステム - WebSocket通信を処理
-pub fn network_system(
-    entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    _delta_time: DeltaTime,
-) -> Result<(), JsValue> {
-    // ネットワークリソースを取得
-    let network_resource = resources.get("network").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<NetworkResource>().map(|r| r.clone())
-    });
+/// リソースに対するdowncast_mutメソッドを追加する拡張トレイト
+trait ResourceExt {
+    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T>;
+}
+
+impl ResourceExt for dyn Resource {
+    fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        // ResourceトレイトからAnyトレイトへの変換
+        // as_any_mutメソッドを使用してAnyトレイトにキャスト
+        self.as_any_mut().downcast_mut::<T>()
+    }
+}
+
+// WebSocketインスタンスを保持する静的変数
+static mut WEBSOCKET_INSTANCE: Option<WebSocket> = None;
+
+/// ネットワークシステム関数
+pub fn network_system(mut resources: &mut dyn Resource, _delta_time: f64) -> Result<(), JsValue> {
+    // 各リソースから必要な情報を個別に抽出
+    let needs_connection;
+    let should_reconnect;
+    let connect_attempts;
+    let is_multiplayer;
     
-    if let Some(network) = network_resource {
-        // 新しいメッセージをチェック
-        if !network.message_queue.is_empty() {
-            // メッセージキューをローカルにコピー
-            let messages = network.message_queue.clone();
+    // 一時的なスコープで情報を取得
+    {
+        let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+            crate::js_bindings::log("NetworkResource not found");
+            panic!("NetworkResource not found");
+        });
+        
+        connect_attempts = network.connect_attempts;
+        should_reconnect = network.should_reconnect();
+        
+        let is_connected = network.is_connected;
+        
+        // PlayerStateResourceから情報を取得 - 別のスコープで
+        {
+            let player = resources.downcast_mut::<PlayerStateResource>().unwrap_or_else(|| {
+                crate::js_bindings::log("PlayerStateResource not found");
+                panic!("PlayerStateResource not found");
+            });
             
-            // リソース内のキューをクリア
-            if let Some(network_rc) = resources.get("network") {
-                if let Some(mut network_res) = network_rc.borrow_mut().downcast_mut::<NetworkResource>() {
-                    network_res.message_queue.clear();
-                }
+            is_multiplayer = player.is_multiplayer;
+        }
+        
+        needs_connection = is_multiplayer && !is_connected;
+    }
+    
+    // 接続が必要な場合
+    if needs_connection {
+        if connect_attempts == 0 {
+            web_sys::console::log_1(&JsValue::from_str("接続を試みます"));
+            
+            // NetworkResourceの更新
+            {
+                let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+                    crate::js_bindings::log("NetworkResource not found");
+                    panic!("NetworkResource not found");
+                });
+                
+                network.connect_attempts += 1;
             }
             
-            // 各メッセージを処理
-            for message_str in messages {
-                process_message(entity_manager, resources, &message_str)?;
+            // WebSocket接続を試みる
+            match setup_websocket() {
+                Ok(ws) => {
+                    // NetworkResourceを更新
+                    let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+                        crate::js_bindings::log("NetworkResource not found");
+                        panic!("NetworkResource not found");
+                    });
+                    
+                    // 接続状態をtrueに設定
+                    network.set_connected(true);
+                    
+                    // WebSocketインスタンスを保存
+                    unsafe {
+                        WEBSOCKET_INSTANCE = Some(ws);
+                    }
+                },
+                Err(e) => {
+                    web_sys::console::error_1(&JsValue::from_str(&format!("WebSocket接続エラー: {:?}", e)));
+                    
+                    let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+                        crate::js_bindings::log("NetworkResource not found");
+                        panic!("NetworkResource not found");
+                    });
+                    
+                    network.is_connected = false;
+                },
+            }
+        } else if should_reconnect {
+            web_sys::console::log_1(&JsValue::from_str("再接続を試みます"));
+            
+            // NetworkResourceの更新
+            {
+                let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+                    crate::js_bindings::log("NetworkResource not found");
+                    panic!("NetworkResource not found");
+                });
+                
+                network.connect_attempts = 0;
+            }
+            
+            // WebSocket再接続
+            match setup_websocket() {
+                Ok(ws) => {
+                    let network = resources.downcast_mut::<NetworkResource>().unwrap_or_else(|| {
+                        crate::js_bindings::log("NetworkResource not found");
+                        panic!("NetworkResource not found");
+                    });
+                    
+                    // 接続状態をtrueに設定
+                    network.set_connected(true);
+                    
+                    // WebSocketインスタンスを保存
+                    unsafe {
+                        WEBSOCKET_INSTANCE = Some(ws);
+                    }
+                },
+                Err(e) => {
+                    web_sys::console::error_1(&JsValue::from_str(&format!("WebSocket再接続エラー: {:?}", e)));
+                },
+            }
+        }
+    }
+    
+    // メッセージキュー処理は別途必要であれば実装
+    
+    Ok(())
+}
+
+/// WebSocketイベントハンドラの設定
+fn setup_event_handlers(
+    ws: web_sys::WebSocket,
+    network: &mut NetworkResource,
+    player: &mut PlayerStateResource,
+    board: &mut BoardResource
+) -> Result<(), Box<dyn std::error::Error>> {
+    // 安全でないcode block - 静的参照を使用（実際の実装では避けるべき）
+    unsafe {
+        static mut NETWORK: Option<*mut NetworkResource> = None;
+        static mut PLAYER: Option<*mut PlayerStateResource> = None;
+        static mut BOARD: Option<*mut BoardResource> = None;
+        
+        NETWORK = Some(network as *mut NetworkResource);
+        PLAYER = Some(player as *mut PlayerStateResource);
+        BOARD = Some(board as *mut BoardResource);
+        
+        // メッセージ受信ハンドラ
+        let on_message = js_sys::Function::new_with_args(
+            "e",
+            r#"
+            if (window.wasmNetworkHandlers && window.wasmNetworkHandlers.onMessage) {
+                window.wasmNetworkHandlers.onMessage(e);
+            }
+            "#,
+        );
+        
+        // 接続成功ハンドラ
+        let on_open = js_sys::Function::new_no_args(
+            r#"
+            if (window.wasmNetworkHandlers && window.wasmNetworkHandlers.onOpen) {
+                window.wasmNetworkHandlers.onOpen();
+            }
+            "#,
+        );
+        
+        // 接続終了ハンドラ
+        let on_close = js_sys::Function::new_with_args(
+            "e",
+            r#"
+            if (window.wasmNetworkHandlers && window.wasmNetworkHandlers.onClose) {
+                window.wasmNetworkHandlers.onClose(e);
+            }
+            "#,
+        );
+        
+        // エラーハンドラ
+        let on_error = js_sys::Function::new_with_args(
+            "e",
+            r#"
+            if (window.wasmNetworkHandlers && window.wasmNetworkHandlers.onError) {
+                window.wasmNetworkHandlers.onError(e);
+            }
+            "#,
+        );
+        
+        // ハンドラを設定
+        network.setup_event_handlers(&ws, on_message, on_open, on_close, on_error);
+        
+        // JavaScript側にハンドラを設定
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        
+        // スクリプトを作成
+        let script = document.create_element("script").map_err(|_| "Failed to create script element")?;
+        script.set_attribute("type", "text/javascript").map_err(|_| "Failed to set attribute")?;
+        script.set_text_content(Some(r#"
+            window.wasmNetworkHandlers = {
+                onMessage: function(e) {
+                    if (e.data) {
+                        try {
+                            const data = JSON.parse(e.data);
+                            window.wasmBindings.handleNetworkMessage(data);
+                        } catch (err) {
+                            console.error("Error parsing message:", err);
+                        }
+                    }
+                },
+                onOpen: function() {
+                    window.wasmBindings.handleNetworkConnected();
+                },
+                onClose: function(e) {
+                    window.wasmBindings.handleNetworkDisconnected(e.code, e.reason);
+                },
+                onError: function(e) {
+                    window.wasmBindings.handleNetworkError(e.message || "Unknown error");
+                }
+            };
+            
+            // WASM Bindings
+            window.wasmBindings = {
+                handleNetworkMessage: function(data) {
+                    // 実装はRust側から呼び出される
+                },
+                handleNetworkConnected: function() {
+                    // 実装はRust側から呼び出される
+                },
+                handleNetworkDisconnected: function(code, reason) {
+                    // 実装はRust側から呼び出される
+                },
+                handleNetworkError: function(message) {
+                    // 実装はRust側から呼び出される
+                }
+            };
+        "#));
+        
+        // headタグが存在すればそこに追加、なければbodyに追加
+        let head_elements = document.get_element_by_id("head");
+        if let Some(head) = head_elements {
+            head.append_child(&script).map_err(|_| "Failed to append script to head")?;
+        } else {
+            // headが見つからない場合はbodyを探す
+            let body_elements = document.get_element_by_id("body");
+            if let Some(body) = body_elements {
+                body.append_child(&script).map_err(|_| "Failed to append script to body")?;
+            } else {
+                // bodyも見つからない場合はdocumentに直接追加
+                document.append_child(&script).map_err(|_| "Failed to append script to document")?;
             }
         }
         
-        // 定期的に位置情報を送信
-        if let Some(player_resource) = resources.get("player").and_then(|res| {
-            res.clone().borrow_mut().downcast_mut::<PlayerResource>().map(|r| r.clone())
-        }) {
-            // プレイヤーIDがある場合のみ送信
-            if let Some(player_id) = &player_resource.player_id {
-                // プレイヤーエンティティを検索
-                let player_entities = entity_manager.find_entities_with_component::<Player>();
-                
-                for entity_id in player_entities {
-                    // プレイヤーコンポーネントを取得して、現在のプレイヤーかチェック
-                    if let Some(player) = entity_manager.get_component::<Player>(entity_id) {
-                        if player.id == *player_id {
-                            // 位置コンポーネントを取得
-                            if let Some(position) = entity_manager.get_component::<Position>(entity_id) {
-                                // 移動メッセージを作成
-                                let move_msg = NetworkMessage {
-                                    msg_type: NetworkMessageType::PlayerMove,
-                                    player_id: Some(player_id.clone()),
-                                    data: None,
-                                    x: Some(position.x),
-                                    y: Some(position.y),
-                                };
-                                
-                                // JSONに変換
-                                let move_json = serde_json::to_string(&move_msg).unwrap_or_default();
-                                
-                                // WebSocketで送信
-                                if let Some(network_rc) = resources.get("network") {
-                                    if let Some(mut network_res) = network_rc.borrow_mut().downcast_mut::<NetworkResource>() {
-                                        network_res.send_message(&move_json);
-                                    }
-                                }
-                            }
-                        }
-                    }
+        // ネットワークの接続状態を更新
+        network.set_connected(true);
+    }
+    Ok(())
+}
+
+/// メッセージキューの処理
+fn process_message_queue(
+    network: &mut NetworkResource,
+    player: &mut PlayerStateResource,
+    board: &mut BoardResource
+) {
+    let messages = std::mem::take(&mut network.message_queue);
+    
+    for message in messages {
+        // メッセージを処理
+        process_message(network, player, board, &message);
+    }
+}
+
+/// メッセージを処理
+fn process_message(network: &NetworkResource, player: &mut PlayerStateResource, board: &mut BoardResource, message: &str) {
+    let json: wasm_bindgen::JsValue = js_sys::JSON::parse(message).unwrap_or_else(|_| wasm_bindgen::JsValue::NULL);
+    
+    if json.is_null() {
+        return; // 不正なJSONメッセージ
+    }
+    
+    // Objectに変換
+    let obj = js_sys::Object::from(json.clone());
+    
+    // メッセージタイプを取得
+    let message_type: String = match js_sys::Reflect::get(&json, &"type".into()) {
+        Ok(value) => value.as_string().unwrap_or_default(),
+        Err(_) => return,
+    };
+    
+    // メッセージタイプに応じて処理
+    match message_type.as_str() {
+        "init" => handle_init_message(&obj, player),
+        "player_joined" => handle_player_joined(&obj, player),
+        "player_left" => handle_player_left(&obj, player),
+        "cells_revealed" => handle_cells_revealed(&obj, board),
+        "flag_toggled" => handle_flag_toggled(&obj, board),
+        "game_over" => handle_game_over(&obj, board),
+        "game_reset" => handle_game_reset(&obj, board),
+        _ => web_sys::console::warn_1(&format!("不明なメッセージタイプ: {}", message_type).into()),
+    }
+}
+
+/// 初期化メッセージの処理
+fn handle_init_message(data: &js_sys::Object, player: &mut PlayerStateResource) {
+    if let Some(player_id) = js_sys::Reflect::get(&data, &"playerId".into()).ok().and_then(|v| v.as_string()) {
+        player.set_player_id(player_id);
+        player.has_joined = true;
+    }
+}
+
+/// プレイヤー参加メッセージの処理
+fn handle_player_joined(data: &js_sys::Object, player: &mut PlayerStateResource) {
+    if let Some(player_name) = js_sys::Reflect::get(&data, &"name".into()).ok().and_then(|v| v.as_string()) {
+        web_sys::console::log_1(&format!("Player joined: {}", player_name).into());
+        // ここでプレイヤーリストなどを更新する
+    }
+}
+
+/// プレイヤー退出メッセージの処理
+fn handle_player_left(data: &js_sys::Object, player: &mut PlayerStateResource) {
+    if let Some(player_id) = js_sys::Reflect::get(&data, &"playerId".into()).ok().and_then(|v| v.as_string()) {
+        web_sys::console::log_1(&format!("Player left: {}", player_id).into());
+        // ここでプレイヤーリストなどを更新する
+    }
+}
+
+/// セル公開メッセージの処理
+fn handle_cells_revealed(data: &js_sys::Object, board: &mut BoardResource) {
+    if let Some(cells) = js_sys::Reflect::get(&data, &"cells".into()).ok() {
+        if let Some(cells_array) = cells.dyn_into::<js_sys::Array>().ok() {
+            let len = cells_array.length();
+            for i in 0..len {
+                if let Some(cell_index) = cells_array.get(i).as_f64() {
+                    // セルを公開
+                    board.reveal_cell(cell_index as usize);
                 }
             }
         }
     }
-    
-    Ok(())
 }
 
-/// ネットワークメッセージを処理
-fn process_message(
-    entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    message_str: &str,
-) -> Result<(), JsValue> {
-    // メッセージをパース
-    if let Ok(message) = serde_json::from_str::<NetworkMessage>(message_str) {
-        match message.msg_type {
-            NetworkMessageType::PlayerJoin => {
-                // プレイヤー参加処理
-                if let (Some(player_id), Some(data)) = (&message.player_id, &message.data) {
-                    handle_player_join(entity_manager, player_id, data)?;
-                }
-            },
+/// フラグ切り替えメッセージの処理
+fn handle_flag_toggled(data: &js_sys::Object, board: &mut BoardResource) {
+    if let Some(index) = js_sys::Reflect::get(&data, &"index".into()).ok().and_then(|v| v.as_f64()) {
+        // フラグを切り替え
+        board.toggle_flag(index as usize);
+    }
+}
+
+/// ゲームオーバーメッセージの処理
+fn handle_game_over(data: &js_sys::Object, board: &mut BoardResource) {
+    if let Some(win) = js_sys::Reflect::get(&data, &"win".into()).ok().and_then(|v| v.as_bool()) {
+        if win {
+            // 勝利処理
+            web_sys::console::log_1(&"Game won!".into());
+        } else {
+            // 敗北処理
+            web_sys::console::log_1(&"Game lost!".into());
             
-            NetworkMessageType::PlayerLeave => {
-                // プレイヤー退出処理
-                if let Some(player_id) = &message.player_id {
-                    handle_player_leave(entity_manager, player_id)?;
-                }
-            },
-            
-            NetworkMessageType::PlayerMove => {
-                // プレイヤー移動処理
-                if let (Some(player_id), Some(x), Some(y)) = (&message.player_id, message.x, message.y) {
-                    handle_player_move(entity_manager, player_id, x, y)?;
-                }
-            },
-            
-            NetworkMessageType::BoardUpdate => {
-                // ボード更新処理
-                if let Some(data) = &message.data {
-                    handle_board_update(resources, data)?;
-                }
-            },
-            
-            NetworkMessageType::RevealCell => {
-                // セル公開処理
-                if let (Some(x), Some(y)) = (message.x, message.y) {
-                    handle_reveal_cell(resources, x as usize, y as usize)?;
-                }
-            },
-            
-            NetworkMessageType::ToggleFlag => {
-                // フラグ切替処理
-                if let (Some(x), Some(y)) = (message.x, message.y) {
-                    handle_toggle_flag(resources, x as usize, y as usize)?;
-                }
-            },
-            
-            NetworkMessageType::GameStart => {
-                // ゲーム開始処理
-                if let Some(data) = &message.data {
-                    handle_game_start(resources, data)?;
-                }
-            },
-            
-            NetworkMessageType::GameOver => {
-                // ゲームオーバー処理
-                handle_game_over(resources)?;
-            },
-            
-            NetworkMessageType::GameWin => {
-                // ゲーム勝利処理
-                handle_game_win(resources)?;
-            },
-            
-            NetworkMessageType::Chat => {
-                // チャットメッセージ処理
-                if let (Some(player_id), Some(data)) = (&message.player_id, &message.data) {
-                    handle_chat_message(entity_manager, player_id, data)?;
-                }
-            },
+            // すべての地雷を表示
+            board.reveal_all_mines();
         }
     }
-    
-    Ok(())
 }
 
-/// プレイヤー参加処理
-fn handle_player_join(
-    entity_manager: &mut EntityManager,
-    player_id: &str,
-    player_name: &str,
-) -> Result<(), JsValue> {
-    // プレイヤーエンティティの作成
-    let entity_id = entity_manager.create_entity();
-    
-    // プレイヤーコンポーネントの追加
-    entity_manager.add_component(entity_id, Player {
-        id: player_id.to_string(),
-        name: player_name.to_string(),
-        color: "#FF0000".to_string(),  // デフォルトカラー
-    });
-    
-    // 位置コンポーネントの追加（初期位置）
-    entity_manager.add_component(entity_id, Position {
-        x: 100.0,
-        y: 100.0,
-    });
-    
-    Ok(())
-}
-
-/// プレイヤー退出処理
-fn handle_player_leave(
-    entity_manager: &mut EntityManager,
-    player_id: &str,
-) -> Result<(), JsValue> {
-    // 指定されたIDのプレイヤーエンティティを検索
-    let player_entities = entity_manager.find_entities_with_component::<Player>();
-    
-    for entity_id in player_entities {
-        if let Some(player) = entity_manager.get_component::<Player>(entity_id) {
-            if player.id == player_id {
-                // エンティティを削除
-                entity_manager.remove_entity(entity_id);
-                break;
+/// ゲームリセットメッセージの処理
+fn handle_game_reset(data: &js_sys::Object, board: &mut BoardResource) {
+    // ボード設定を取得
+    if let Some(width) = js_sys::Reflect::get(&data, &"width".into()).ok().and_then(|v| v.as_f64()) {
+        if let Some(height) = js_sys::Reflect::get(&data, &"height".into()).ok().and_then(|v| v.as_f64()) {
+            if let Some(mines) = js_sys::Reflect::get(&data, &"mines".into()).ok().and_then(|v| v.as_f64()) {
+                // ボードをリセット
+                let config = crate::resources::board_state::BoardConfig::custom(
+                    width as usize,
+                    height as usize,
+                    mines as usize,
+                );
+                *board = BoardResource::new(config);
             }
         }
     }
-    
-    Ok(())
 }
 
-/// プレイヤー移動処理
-fn handle_player_move(
+/// プレイヤー位置の更新
+pub fn update_player_position(
     entity_manager: &mut EntityManager,
-    player_id: &str,
+    player_id: &String,
     x: f64,
     y: f64,
-) -> Result<(), JsValue> {
-    // 指定されたIDのプレイヤーエンティティを検索
+) -> Result<(), String> {
+    // プレイヤーのエンティティを探す
     let player_entities = entity_manager.find_entities_with_component::<Player>();
+    let mut found = false;
     
     for entity_id in player_entities {
         if let Some(player) = entity_manager.get_component::<Player>(entity_id) {
-            if player.id == player_id {
-                // 位置を更新
-                if let Some(mut position) = entity_manager.get_component_mut::<Position>(entity_id) {
-                    position.x = x;
-                    position.y = y;
-                }
-                break;
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// ボード更新処理
-fn handle_board_update(
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    data: &str,
-) -> Result<(), JsValue> {
-    // ボードデータをパース
-    if let Ok(board_data) = serde_json::from_str::<BoardResource>(data) {
-        if let Some(board_rc) = resources.get("board") {
-            if let Some(mut board) = board_rc.borrow_mut().downcast_mut::<BoardResource>() {
-                // ボードデータを更新
-                *board = board_data;
-                board.is_updated = true;
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// セル公開処理
-fn handle_reveal_cell(
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    x: usize,
-    y: usize,
-) -> Result<(), JsValue> {
-    if let Some(board_rc) = resources.get("board") {
-        if let Some(mut board) = board_rc.borrow_mut().downcast_mut::<BoardResource>() {
-            // セルを公開
-            board.reveal_cell(x, y);
-        }
-    }
-    
-    Ok(())
-}
-
-/// フラグ切替処理
-fn handle_toggle_flag(
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    x: usize,
-    y: usize,
-) -> Result<(), JsValue> {
-    if let Some(board_rc) = resources.get("board") {
-        if let Some(mut board) = board_rc.borrow_mut().downcast_mut::<BoardResource>() {
-            // フラグを切り替え
-            board.toggle_flag(x, y);
-        }
-    }
-    
-    Ok(())
-}
-
-/// ゲーム開始処理
-fn handle_game_start(
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    data: &str,
-) -> Result<(), JsValue> {
-    // ゲーム初期データをパース
-    if let Ok(board_data) = serde_json::from_str::<BoardResource>(data) {
-        if let Some(board_rc) = resources.get("board") {
-            if let Some(mut board) = board_rc.borrow_mut().downcast_mut::<BoardResource>() {
-                // ボードデータをリセットして初期状態に
-                *board = board_data;
-                board.game_started = true;
-                board.game_over = false;
-                board.game_won = false;
-                board.is_updated = true;
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// ゲームオーバー処理
-fn handle_game_over(
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-) -> Result<(), JsValue> {
-    if let Some(board_rc) = resources.get("board") {
-        if let Some(mut board) = board_rc.borrow_mut().downcast_mut::<BoardResource>() {
-            // ゲームオーバー状態に設定
-            board.game_over = true;
-            board.is_updated = true;
-            
-            // すべての地雷を公開
-            for y in 0..board.height {
-                for x in 0..board.width {
-                    let idx = y * board.width + x;
-                    if board.cells[idx] == -1 {
-                        board.revealed[idx] = true;
-                    }
+            if player.id == *player_id {
+                // 既存のプレイヤーを見つけた
+                if let Some(pos) = entity_manager.get_component_mut::<Position>(entity_id) {
+                    pos.x = x;
+                    pos.y = y;
+                    found = true;
+                    break;
                 }
             }
         }
     }
     
-    Ok(())
-}
-
-/// ゲーム勝利処理
-fn handle_game_win(
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-) -> Result<(), JsValue> {
-    if let Some(board_rc) = resources.get("board") {
-        if let Some(mut board) = board_rc.borrow_mut().downcast_mut::<BoardResource>() {
-            // 勝利状態に設定
-            board.game_won = true;
-            board.is_updated = true;
-            
-            // すべての地雷にフラグを立てる
-            for y in 0..board.height {
-                for x in 0..board.width {
-                    let idx = y * board.width + x;
-                    if board.cells[idx] == -1 {
-                        board.flagged[idx] = true;
-                    }
-                }
-            }
-        }
+    // プレイヤーが見つからなかった場合、新規作成
+    if !found {
+        let entity_id = entity_manager.create_entity();
+        entity_manager.add_component(entity_id, Position { x, y }).unwrap();
+        entity_manager.add_component(entity_id, Player {
+            id: player_id.clone(),
+            name: format!("Player {}", player_id),
+            color: "#FF0000".to_string(),
+            last_action_time: js_sys::Date::now(),
+            is_local: false,
+        }).unwrap();
     }
     
     Ok(())
 }
 
-/// チャットメッセージ処理
-fn handle_chat_message(
-    _entity_manager: &mut EntityManager,
-    _player_id: &str,
-    _message: &str,
-) -> Result<(), JsValue> {
-    // チャットメッセージを処理するロジックを実装
-    // 必要に応じてUIリソースにメッセージを追加するなど
-    
-    Ok(())
+/// WebSocketの設定を行う
+fn setup_websocket() -> Result<WebSocket, JsValue> {
+    WebSocket::new("wss://api.eda3.net/ws")
 } 

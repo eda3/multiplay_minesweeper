@@ -30,7 +30,17 @@ pub struct CellStateComponent {
 }
 
 impl Component for CellStateComponent {
-    // Componentトレイトのデフォルト実装を使用
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
 }
 
 impl Default for CellStateComponent {
@@ -51,7 +61,17 @@ pub struct CellContentComponent {
 }
 
 impl Component for CellContentComponent {
-    // Componentトレイトのデフォルト実装を使用
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
 }
 
 impl Default for CellContentComponent {
@@ -74,7 +94,17 @@ pub struct GridPositionComponent {
 }
 
 impl Component for GridPositionComponent {
-    // Componentトレイトのデフォルト実装を使用
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn clone_box(&self) -> Box<dyn Component> {
+        Box::new(self.clone())
+    }
 }
 
 impl Default for GridPositionComponent {

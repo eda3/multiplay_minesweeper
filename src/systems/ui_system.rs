@@ -1,323 +1,450 @@
 /**
  * UIシステム
  * 
- * ユーザーインターフェースの描画と更新を担当するシステム
+ * ユーザーインターフェースを更新・描画するシステム
  */
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::any::Any;
 use wasm_bindgen::JsValue;
-use web_sys::CanvasRenderingContext2d;
 
-use crate::entities::EntityManager;
-use crate::systems::system_registry::DeltaTime;
-use crate::resources::{RenderResource, GameStateResource, TimerResource, UiResource};
+use crate::resources::RenderResource;
+use crate::resources::{GameStateResource, GamePhase};
+use crate::resources::TimeResource;
+use crate::resources::InputResource;
 
-/// UIシステム - インターフェースの描画処理
-pub fn ui_system(
-    entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    _delta_time: DeltaTime,
-) -> Result<(), JsValue> {
-    // UIリソースを取得
-    let ui_resource = resources.get("ui").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<UiResource>().map(|r| r.clone())
-    });
+/// ボタンの定義
+#[derive(Debug, Clone)]
+struct Button {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    text: String,
+    is_hovered: bool,
+    is_pressed: bool,
+    action: ButtonAction,
+}
+
+/// ボタンのアクション
+#[derive(Debug, Clone)]
+enum ButtonAction {
+    StartGame,
+    RestartGame,
+    QuitGame,
+    ChangeDifficulty(usize),
+    ToggleSound,
+    GoToMenu,
+}
+
+/// UIの状態
+#[derive(Debug, Clone)]
+struct UiState {
+    buttons: Vec<Button>,
+    active_screen: String,
+    hover_index: Option<usize>,
+    last_mouse_pos: (i32, i32),
+}
+
+/// UIシステム関数
+pub fn ui_system(resources: &[Rc<RefCell<dyn Any>>]) {
+    // RenderResourceのRcを探す
+    let render_rc_option = resources.iter()
+        .find(|r| r.borrow().is::<RenderResource>());
     
-    // 描画リソースを取得
-    let render_resource = resources.get("render").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<RenderResource>().map(|r| r.clone())
-    });
+    // GameStateResourceのRcを探す
+    let game_rc_option = resources.iter()
+        .find(|r| r.borrow().is::<GameStateResource>());
     
-    // ゲーム状態を取得
-    let game_state = resources.get("game_state").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<GameStateResource>().map(|r| r.clone())
-    });
+    // TimeResourceのRcを探す
+    let time_rc_option = resources.iter()
+        .find(|r| r.borrow().is::<TimeResource>());
     
-    if let (Some(ui), Some(render), Some(state)) = (ui_resource, render_resource, game_state) {
-        let context = render.context.clone();
+    // InputResourceのRcを探す
+    let input_rc_option = resources.iter()
+        .find(|r| r.borrow().is::<InputResource>());
+    
+    // 必要なリソースが見つからない場合は何もしない
+    if render_rc_option.is_none() || game_rc_option.is_none() || 
+       time_rc_option.is_none() || input_rc_option.is_none() {
+        return;
+    }
+    
+    // 借用して処理
+    {
+        let render = render_rc_option.unwrap().borrow();
+        let render = render.downcast_ref::<RenderResource>().unwrap();
         
-        // 現在の状態に応じたUI描画
-        match state.current_state.as_str() {
-            "loading" => {
-                draw_loading_screen(&context, &ui, render.canvas_width, render.canvas_height)?;
-            },
-            "menu" => {
-                draw_menu_screen(&context, &ui, render.canvas_width, render.canvas_height)?;
-            },
-            "game" => {
-                draw_game_ui(entity_manager, resources, &context, &ui, render.canvas_width, render.canvas_height)?;
-            },
-            "game_over" => {
-                draw_game_over_screen(resources, &context, &ui, render.canvas_width, render.canvas_height)?;
-            },
-            _ => {}
+        let game = game_rc_option.unwrap().borrow();
+        let game = game.downcast_ref::<GameStateResource>().unwrap();
+        
+        let time = time_rc_option.unwrap().borrow();
+        let time = time.downcast_ref::<TimeResource>().unwrap();
+        
+        let input = input_rc_option.unwrap().borrow();
+        let input = input.downcast_ref::<InputResource>().unwrap();
+        
+        // UIの状態を保持する静的変数
+        thread_local! {
+            static UI_STATE: RefCell<UiState> = RefCell::new(UiState {
+                buttons: Vec::new(),
+                active_screen: "main".to_string(),
+                hover_index: None,
+                last_mouse_pos: (0, 0),
+            });
+        }
+        
+        // UIの状態を更新
+        UI_STATE.with(|ui_state| {
+            let mut ui_state = ui_state.borrow_mut();
+            
+            // マウス位置の更新
+            let (mouse_x, mouse_y) = input.get_mouse_position();
+            ui_state.last_mouse_pos = (mouse_x, mouse_y);
+            
+            // UIを更新
+            update_ui(&mut ui_state, game, input);
+            
+            // UIを描画
+            draw_ui(render.get_context(), &ui_state, game, time);
+        });
+    }
+}
+
+/// UIの状態を更新
+fn update_ui(ui_state: &mut UiState, game: &GameStateResource, input: &InputResource) {
+    // ゲームフェーズに応じてUIの状態を更新
+    match game.phase {
+        GamePhase::StartScreen => {
+            if ui_state.active_screen != "start" {
+                ui_state.active_screen = "start".to_string();
+                ui_state.buttons.clear();
+                generate_start_menu_buttons(ui_state);
+            }
+        },
+        GamePhase::Playing => {
+            ui_state.active_screen = "playing".to_string();
+            ui_state.buttons.clear();
+        },
+        GamePhase::Paused => {
+            if ui_state.active_screen != "pause" {
+                ui_state.active_screen = "pause".to_string();
+                ui_state.buttons.clear();
+                generate_pause_menu_buttons(ui_state);
+            }
+        },
+        GamePhase::GameOver { .. } => {
+            if ui_state.active_screen != "gameover" {
+                ui_state.active_screen = "gameover".to_string();
+                ui_state.buttons.clear();
+                generate_game_over_buttons(ui_state);
+            }
+        },
+        _ => {}
+    }
+    
+    // ボタンのホバー状態を更新
+    update_button_hover_states(ui_state, ui_state.last_mouse_pos.0, ui_state.last_mouse_pos.1);
+    
+    // クリック処理
+    if input.is_mouse_pressed(0) {
+        if let Some(hover_index) = ui_state.hover_index {
+            ui_state.buttons[hover_index].is_pressed = true;
+            
+            // クリックアクションの処理はここでは行わず、ゲームロジックに委ねる
+            // 実際のアクションはinput_systemで処理される
         }
     }
-    
-    Ok(())
 }
 
-/// ロード画面の描画
-fn draw_loading_screen(
-    context: &CanvasRenderingContext2d,
-    ui: &UiResource,
-    canvas_width: f64,
-    canvas_height: f64,
-) -> Result<(), JsValue> {
-    // ローディングバーの描画
-    let bar_width = canvas_width * 0.8;
-    let bar_height = 20.0;
-    let bar_x = (canvas_width - bar_width) / 2.0;
-    let bar_y = canvas_height / 2.0 - bar_height / 2.0;
+/// ボタンのホバー状態を更新
+fn update_button_hover_states(ui_state: &mut UiState, mouse_x: i32, mouse_y: i32) {
+    ui_state.hover_index = None;
     
-    // ロード進捗（0.0〜1.0）
-    let progress = ui.loading_progress;
-    
-    // 背景バー
-    context.set_fill_style(&JsValue::from_str("#333333"));
-    context.fill_rect(bar_x, bar_y, bar_width, bar_height);
-    
-    // 進捗バー
-    context.set_fill_style(&JsValue::from_str("#00FF00"));
-    context.fill_rect(bar_x, bar_y, bar_width * progress, bar_height);
-    
-    // テキスト
-    context.set_fill_style(&JsValue::from_str("#FFFFFF"));
-    context.set_font("20px Arial");
-    context.set_text_align("center");
-    context.set_text_baseline("top");
-    
-    context.fill_text(
-        "Loading...",
-        canvas_width / 2.0,
-        bar_y + bar_height + 10.0,
-    )?;
-    
-    Ok(())
+    for (index, button) in ui_state.buttons.iter_mut().enumerate() {
+        let is_hovered = mouse_x >= button.x as i32 && 
+                         mouse_x <= (button.x + button.width) as i32 &&
+                         mouse_y >= button.y as i32 && 
+                         mouse_y <= (button.y + button.height) as i32;
+        
+        button.is_hovered = is_hovered;
+        
+        if is_hovered {
+            ui_state.hover_index = Some(index);
+        }
+    }
 }
 
-/// メニュー画面の描画
-fn draw_menu_screen(
-    context: &CanvasRenderingContext2d,
-    ui: &UiResource,
-    canvas_width: f64,
-    canvas_height: f64,
-) -> Result<(), JsValue> {
-    // タイトル
-    context.set_fill_style(&JsValue::from_str("#FFFFFF"));
-    context.set_font("36px Arial");
-    context.set_text_align("center");
-    context.set_text_baseline("top");
+/// スタートメニューのボタンを生成
+fn generate_start_menu_buttons(ui_state: &mut UiState) {
+    let canvas_width = 800.0;  // 仮の値
+    let canvas_height = 600.0; // 仮の値
     
-    context.fill_text(
-        "MultiPlayer Minesweeper",
-        canvas_width / 2.0,
-        50.0,
-    )?;
+    // 新しいゲームボタン
+    ui_state.buttons.push(Button {
+        x: canvas_width / 2.0 - 100.0,
+        y: canvas_height / 2.0 - 50.0,
+        width: 200.0,
+        height: 40.0,
+        text: "新しいゲーム".to_string(),
+        is_hovered: false,
+        is_pressed: false,
+        action: ButtonAction::StartGame,
+    });
     
-    // 各ボタンの描画
-    for (i, button) in ui.menu_buttons.iter().enumerate() {
-        let button_width = 200.0;
-        let button_height = 50.0;
-        let button_x = (canvas_width - button_width) / 2.0;
-        let button_y = 150.0 + (i as f64 * 70.0);
-        
-        // ボタン背景
-        let button_color = if button.is_hovered {
-            "#555555"
-        } else {
-            "#333333"
-        };
-        
-        context.set_fill_style(&JsValue::from_str(button_color));
-        context.fill_rect(button_x, button_y, button_width, button_height);
-        
-        // ボタンテキスト
-        context.set_fill_style(&JsValue::from_str("#FFFFFF"));
-        context.set_font("20px Arial");
-        context.set_text_align("center");
-        context.set_text_baseline("middle");
-        
-        context.fill_text(
-            &button.text,
-            canvas_width / 2.0,
-            button_y + button_height / 2.0,
-        )?;
+    // 難易度選択ボタン
+    ui_state.buttons.push(Button {
+        x: canvas_width / 2.0 - 100.0,
+        y: canvas_height / 2.0 + 10.0,
+        width: 200.0,
+        height: 40.0,
+        text: "難易度: 初級".to_string(),
+        is_hovered: false,
+        is_pressed: false,
+        action: ButtonAction::ChangeDifficulty(0),
+    });
+}
+
+/// ポーズメニューのボタンを生成
+fn generate_pause_menu_buttons(ui_state: &mut UiState) {
+    let canvas_width = 800.0;  // 仮の値
+    let canvas_height = 600.0; // 仮の値
+    
+    // 再開ボタン
+    ui_state.buttons.push(Button {
+        x: canvas_width / 2.0 - 100.0,
+        y: canvas_height / 2.0 - 60.0,
+        width: 200.0,
+        height: 40.0,
+        text: "ゲームを再開".to_string(),
+        is_hovered: false,
+        is_pressed: false,
+        action: ButtonAction::StartGame,
+    });
+    
+    // リスタートボタン
+    ui_state.buttons.push(Button {
+        x: canvas_width / 2.0 - 100.0,
+        y: canvas_height / 2.0 - 10.0,
+        width: 200.0,
+        height: 40.0,
+        text: "リスタート".to_string(),
+        is_hovered: false,
+        is_pressed: false,
+        action: ButtonAction::RestartGame,
+    });
+    
+    // メニューに戻るボタン
+    ui_state.buttons.push(Button {
+        x: canvas_width / 2.0 - 100.0,
+        y: canvas_height / 2.0 + 40.0,
+        width: 200.0,
+        height: 40.0,
+        text: "メインメニューに戻る".to_string(),
+        is_hovered: false,
+        is_pressed: false,
+        action: ButtonAction::GoToMenu,
+    });
+}
+
+/// ゲームオーバー時のボタンを生成
+fn generate_game_over_buttons(ui_state: &mut UiState) {
+    let canvas_width = 800.0;  // 仮の値
+    let canvas_height = 600.0; // 仮の値
+    
+    // リスタートボタン
+    ui_state.buttons.push(Button {
+        x: canvas_width / 2.0 - 100.0,
+        y: canvas_height / 2.0 + 60.0,
+        width: 200.0,
+        height: 40.0,
+        text: "もう一度プレイ".to_string(),
+        is_hovered: false,
+        is_pressed: false,
+        action: ButtonAction::RestartGame,
+    });
+    
+    // メニューに戻るボタン
+    ui_state.buttons.push(Button {
+        x: canvas_width / 2.0 - 100.0,
+        y: canvas_height / 2.0 + 110.0,
+        width: 200.0,
+        height: 40.0,
+        text: "メインメニューに戻る".to_string(),
+        is_hovered: false,
+        is_pressed: false,
+        action: ButtonAction::GoToMenu,
+    });
+}
+
+/// UIを描画
+fn draw_ui(
+    context: &web_sys::CanvasRenderingContext2d,
+    ui_state: &UiState,
+    game: &GameStateResource,
+    time: &TimeResource
+) {
+    match game.phase {
+        GamePhase::StartScreen => {
+            draw_start_menu(context);
+        },
+        GamePhase::Playing => {
+            draw_playing_ui(context, game, time);
+        },
+        GamePhase::Paused => {
+            draw_pause_menu(context);
+        },
+        GamePhase::GameOver { .. } => {
+            draw_game_over_ui(context, game);
+        },
+        _ => {}
     }
     
-    // 難易度選択
-    context.set_fill_style(&JsValue::from_str("#FFFFFF"));
-    context.set_font("18px Arial");
+    // ボタンを描画
+    for button in &ui_state.buttons {
+        draw_button(context, button);
+    }
+}
+
+/// ボタンを描画
+fn draw_button(context: &web_sys::CanvasRenderingContext2d, button: &Button) {
+    // ボタンの背景
+    let background_color = if button.is_pressed {
+        "#005577"
+    } else if button.is_hovered {
+        "#0088aa"
+    } else {
+        "#0099cc"
+    };
+    
+    context.set_fill_style(&JsValue::from_str(background_color));
+    context.fill_rect(button.x, button.y, button.width, button.height);
+    
+    // ボタンの枠線
+    context.set_stroke_style(&JsValue::from_str("#004466"));
+    context.set_line_width(2.0);
+    context.stroke_rect(button.x, button.y, button.width, button.height);
+    
+    // ボタンのテキスト
+    context.set_fill_style(&JsValue::from_str("#ffffff"));
+    context.set_font("16px Arial");
     context.set_text_align("center");
     context.set_text_baseline("middle");
-    
     context.fill_text(
-        "Difficulty:",
-        canvas_width / 2.0,
-        350.0,
-    )?;
-    
-    // 難易度ボタン
-    let difficulties = ["Easy", "Medium", "Hard"];
-    for (i, &diff) in difficulties.iter().enumerate() {
-        let button_width = 100.0;
-        let button_height = 40.0;
-        let button_x = canvas_width / 2.0 - 150.0 + (i as f64 * 110.0);
-        let button_y = 380.0;
-        
-        // 選択されているかで色を変える
-        let is_selected = ui.selected_difficulty == i;
-        let button_color = if is_selected {
-            "#00AA00"
-        } else {
-            "#555555"
-        };
-        
-        context.set_fill_style(&JsValue::from_str(button_color));
-        context.fill_rect(button_x, button_y, button_width, button_height);
-        
-        // ボタンテキスト
-        context.set_fill_style(&JsValue::from_str("#FFFFFF"));
-        context.set_font("16px Arial");
-        context.set_text_align("center");
-        context.set_text_baseline("middle");
-        
-        context.fill_text(
-            diff,
-            button_x + button_width / 2.0,
-            button_y + button_height / 2.0,
-        )?;
-    }
-    
-    Ok(())
+        &button.text, 
+        button.x + button.width / 2.0, 
+        button.y + button.height / 2.0
+    ).unwrap();
 }
 
-/// ゲーム中のUI描画
-fn draw_game_ui(
-    _entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    context: &CanvasRenderingContext2d,
-    _ui: &UiResource,
-    canvas_width: f64,
-    _canvas_height: f64,
-) -> Result<(), JsValue> {
-    // ゲームタイマーを取得
-    let game_timer = resources.get("game_timer").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<TimerResource>().map(|r| r.clone())
-    });
+/// スタートメニューを描画
+fn draw_start_menu(context: &web_sys::CanvasRenderingContext2d) {
+    context.set_fill_style(&JsValue::from_str("#333333"));
+    context.set_font("32px Arial");
+    context.set_text_align("center");
+    context.set_text_baseline("middle");
+    context.fill_text("マインスイーパー", 400.0, 150.0).unwrap();
+}
+
+/// プレイ中のUIを描画
+fn draw_playing_ui(
+    context: &web_sys::CanvasRenderingContext2d,
+    game: &GameStateResource,
+    time: &TimeResource
+) {
+    // 経過時間を表示
+    let elapsed_seconds = (game.elapsed_time / 1000.0) as u32;
+    let minutes = elapsed_seconds / 60;
+    let seconds = elapsed_seconds % 60;
     
-    // ボードリソースを取得
-    let board_resource = resources.get("board").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<crate::resources::BoardResource>().map(|r| r.clone())
-    });
+    context.set_fill_style(&JsValue::from_str("#333333"));
+    context.set_font("18px Arial");
+    context.set_text_align("left");
+    context.set_text_baseline("top");
+    context.fill_text(
+        &format!("時間: {:02}:{:02}", minutes, seconds),
+        10.0,
+        10.0
+    ).unwrap();
     
-    if let Some(timer) = game_timer {
-        // タイマー表示
-        context.set_fill_style(&JsValue::from_str("#FFFFFF"));
-        context.set_font("20px Arial");
+    // スコアを表示
+    context.set_text_align("right");
+    context.fill_text(
+        &format!("スコア: {}", game.score),
+        790.0,
+        10.0
+    ).unwrap();
+    
+    // FPSを表示（デバッグモードの場合）
+    if game.debug_mode {
         context.set_text_align("left");
-        context.set_text_baseline("top");
-        
-        let seconds = timer.current_time.floor() as i32;
-        let minutes = seconds / 60;
-        let seconds_remainder = seconds % 60;
-        
+        context.set_font("12px Arial");
         context.fill_text(
-            &format!("Time: {:02}:{:02}", minutes, seconds_remainder),
+            &format!("FPS: {:.1}", time.fps),
             10.0,
-            10.0,
-        )?;
+            40.0
+        ).unwrap();
     }
-    
-    if let Some(board) = board_resource {
-        // 地雷カウンター
-        context.set_fill_style(&JsValue::from_str("#FFFFFF"));
-        context.set_font("20px Arial");
-        context.set_text_align("right");
-        context.set_text_baseline("top");
-        
-        // フラグが立てられた数を数える
-        let mut flag_count = 0;
-        for &flagged in &board.flagged {
-            if flagged {
-                flag_count += 1;
-            }
-        }
-        
-        let mines_remaining = board.mine_count - flag_count;
-        
-        context.fill_text(
-            &format!("Mines: {}", mines_remaining),
-            canvas_width - 10.0,
-            10.0,
-        )?;
-    }
-    
-    Ok(())
 }
 
-/// ゲームオーバー画面の描画
-fn draw_game_over_screen(
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    context: &CanvasRenderingContext2d,
-    _ui: &UiResource,
-    canvas_width: f64,
-    canvas_height: f64,
-) -> Result<(), JsValue> {
-    // ゲーム状態を取得
-    let game_state = resources.get("game_state").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<GameStateResource>().map(|r| r.clone())
-    });
+/// ポーズメニューを描画
+fn draw_pause_menu(context: &web_sys::CanvasRenderingContext2d) {
+    // 半透明の背景
+    context.set_fill_style(&JsValue::from_str("rgba(0, 0, 0, 0.5)"));
+    context.fill_rect(0.0, 0.0, 800.0, 600.0);
     
-    // リトライタイマーを取得
-    let retry_timer = resources.get("retry_timer").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<TimerResource>().map(|r| r.clone())
-    });
+    // ポーズタイトル
+    context.set_fill_style(&JsValue::from_str("#ffffff"));
+    context.set_font("32px Arial");
+    context.set_text_align("center");
+    context.set_text_baseline("middle");
+    context.fill_text("一時停止", 400.0, 150.0).unwrap();
+}
+
+/// ゲームオーバーUIを描画
+fn draw_game_over_ui(context: &web_sys::CanvasRenderingContext2d, game: &GameStateResource) {
+    // 半透明の背景
+    context.set_fill_style(&JsValue::from_str("rgba(0, 0, 0, 0.7)"));
+    context.fill_rect(0.0, 0.0, 800.0, 600.0);
     
-    if let Some(state) = game_state {
-        // 半透明の背景
-        context.set_fill_style(&JsValue::from_str("rgba(0, 0, 0, 0.7)"));
-        context.fill_rect(0.0, 0.0, canvas_width, canvas_height);
-        
-        // 結果テキスト
-        let result_text = if state.is_victory {
-            "You Win!"
-        } else {
-            "Game Over"
-        };
-        
-        let text_color = if state.is_victory {
-            "#00FF00"
-        } else {
-            "#FF0000"
-        };
-        
-        context.set_fill_style(&JsValue::from_str(text_color));
-        context.set_font("48px Arial");
-        context.set_text_align("center");
-        context.set_text_baseline("middle");
+    // 結果タイトル
+    let title = match game.phase {
+        GamePhase::GameOver { win, .. } => {
+            if win {
+                "ゲームクリア！"
+            } else {
+                "ゲームオーバー"
+            }
+        },
+        _ => "ゲーム終了"
+    };
+    
+    context.set_fill_style(&JsValue::from_str(
+        if title == "ゲームクリア！" { "#44ff44" } else { "#ff4444" }
+    ));
+    context.set_font("32px Arial");
+    context.set_text_align("center");
+    context.set_text_baseline("middle");
+    context.fill_text(title, 400.0, 150.0).unwrap();
+    
+    // スコア表示
+    context.set_fill_style(&JsValue::from_str("#ffffff"));
+    context.set_font("24px Arial");
+    
+    if let GamePhase::GameOver { score, time, .. } = game.phase {
+        let minutes = time.as_secs() / 60;
+        let seconds = time.as_secs() % 60;
         
         context.fill_text(
-            result_text,
-            canvas_width / 2.0,
-            canvas_height / 2.0 - 50.0,
-        )?;
+            &format!("スコア: {}", score),
+            400.0,
+            200.0
+        ).unwrap();
         
-        // リトライメッセージ
-        if let Some(timer) = retry_timer {
-            context.set_fill_style(&JsValue::from_str("#FFFFFF"));
-            context.set_font("24px Arial");
-            
-            let seconds_remaining = (timer.duration - timer.current_time).ceil() as i32;
-            
-            context.fill_text(
-                &format!("Returning to menu in {} seconds...", seconds_remaining),
-                canvas_width / 2.0,
-                canvas_height / 2.0 + 50.0,
-            )?;
-        }
+        context.fill_text(
+            &format!("時間: {:02}:{:02}", minutes, seconds),
+            400.0,
+            240.0
+        ).unwrap();
     }
-    
-    Ok(())
 } 

@@ -14,13 +14,22 @@ use web_sys::console;
 
 use crate::entities::EntityManager;
 use crate::resources::{
-    TimeResource, CoreGameResource, PlayerStateResource, 
-    GameConfigResource, ResourceManager, ResourceBatch, ResourceBatchMut, Resource
+    TimeResource, GameStateResource, PlayerStateResource, 
+    ResourceManager, ResourceBatch, ResourceBatchMut, Resource
 };
 use super::system_trait::System;
 use super::system_group::SystemGroup;
 use super::resource_dependency::ResourceDependency;
 use crate::systems::system_registry::SystemPriority;
+use crate::systems::board_systems::board_init_system::board_init_system;
+use crate::systems::board_systems::cell_reveal_system::cell_reveal_system;
+use crate::systems::board_systems::flag_toggle_system::flag_toggle_system;
+use crate::systems::board_systems::win_condition_system::win_condition_system;
+use crate::systems::board_systems::{
+    FlagToggleSystem,
+    WinConditionSystem
+};
+use super::system_scheduler::SystemFn;
 
 /// システムレジストリ
 /// 全システムとグループの管理を行う
@@ -139,7 +148,7 @@ impl SystemRegistry {
     /// 特定グループの全システムを更新
     pub fn update_group(&mut self, group_name: &str, entity_manager: &mut EntityManager, delta_time: f32) -> Result<(), String> {
         if let Some(group) = self.groups.get_mut(group_name) {
-            group.update_all(entity_manager, delta_time);
+            group.update_all(entity_manager, &mut self.resource_manager, delta_time);
             Ok(())
         } else {
             Err(format!("グループが見つかりません: {}", group_name))
@@ -166,18 +175,30 @@ impl SystemRegistry {
     }
     
     /// リソースを追加
-    pub fn add_resource<T: 'static>(&mut self, resource: T) {
+    pub fn add_resource<T: 'static + Resource>(&mut self, resource: T) {
         self.resource_manager.insert(resource);
     }
     
     /// リソースを取得
-    pub fn get_resource<T: 'static>(&self) -> Option<&T> {
-        self.resource_manager.get::<T>()
+    pub fn get_resource<T: 'static + Resource>(&self) -> Option<&T> {
+        self.resource_manager.get::<T>().ok().and_then(|rc| {
+            let borrowed = rc.borrow();
+            borrowed.downcast_ref::<T>().map(|t| unsafe {
+                // ライフタイム変換（リソースはシステムレジストリと同じライフタイムを持つ）
+                std::mem::transmute::<&T, &T>(t)
+            })
+        })
     }
     
     /// リソースを取得（可変）
-    pub fn get_resource_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        self.resource_manager.get_mut::<T>()
+    pub fn get_resource_mut<T: 'static + Resource>(&mut self) -> Option<&mut T> {
+        self.resource_manager.get_mut::<T>().ok().and_then(|rc| {
+            let borrowed = &mut *rc.borrow_mut();
+            borrowed.downcast_mut::<T>().map(|t| unsafe {
+                // ライフタイム変換（リソースはシステムレジストリと同じライフタイムを持つ）
+                std::mem::transmute::<&mut T, &mut T>(t)
+            })
+        })
     }
     
     /// 安全な読み取り専用バッチアクセス
@@ -185,9 +206,9 @@ impl SystemRegistry {
     where
         F: FnOnce(&ResourceBatch<dyn Resource>) -> R,
     {
-        // シンプルに関数を呼び出す
-        let empty_batch = ResourceBatch { resource: &() as &dyn Resource };
-        f(&empty_batch)
+        // 空のリソースバッチを作成して関数を呼び出し
+        let batch = ResourceBatch { resource: &EmptyResource as &dyn Resource };
+        f(&batch)
     }
     
     /// バッチ処理（読み書き）のための安全なアクセスを提供
@@ -195,19 +216,25 @@ impl SystemRegistry {
     where
         F: FnOnce(&mut ResourceBatchMut<dyn Resource>) -> R,
     {
-        // シンプルに関数を呼び出す
-        let mut empty_batch = ResourceBatchMut { resource: &mut () as &mut dyn Resource };
-        f(&mut empty_batch)
+        // 安全でない静的可変参照を使用する必要がある
+        // この場合は単一のスレッドでのみ使用されるため安全
+        unsafe {
+            let mut batch = ResourceBatchMut { resource: &mut EMPTY_RESOURCE as &mut dyn Resource };
+            f(&mut batch)
+        }
     }
     
     /// リソースが存在するかチェック
-    pub fn has_resource<T: 'static>(&self) -> bool {
+    pub fn has_resource<T: 'static + Resource>(&self) -> bool {
         self.resource_manager.contains::<T>()
     }
     
     /// リソースを削除
-    pub fn remove_resource<T: 'static>(&mut self) -> Option<T> {
-        self.resource_manager.remove::<T>()
+    pub fn remove_resource<T: 'static + Resource + Default>(&mut self) -> Option<T> {
+        match self.resource_manager.remove::<T>() {
+            Ok(()) => Some(T::default()),
+            Err(_) => None
+        }
     }
     
     /// システムの依存関係に基づいて実行順序を決定
@@ -261,11 +288,16 @@ impl SystemRegistry {
         }
         
         // 各システムについて、依存関係を推論
+        let mut new_deps = HashMap::new();
+        
         for (index, (read_resources, write_resources)) in &self.system_resource_dependencies {
             let system_name = self.systems[*index].name().to_string();
-            let mut deps = self.dependency_cache
-                .entry(system_name.clone())
-                .or_insert_with(HashSet::new);
+            let mut deps = HashSet::new();
+            
+            // 既存の依存関係をコピー
+            if let Some(existing_deps) = self.dependency_cache.get(&system_name) {
+                deps.extend(existing_deps.iter().cloned());
+            }
             
             // 読み取りリソースの依存関係
             for &read_type_id in read_resources {
@@ -293,19 +325,46 @@ impl SystemRegistry {
                         }
                     }
                 }
+            }
+            
+            new_deps.insert(system_name, deps);
+        }
+        
+        // リソースを読み取るシステムの依存関係を更新
+        for (reader_index, (reader_resources, _)) in &self.system_resource_dependencies {
+            let reader_name = self.systems[*reader_index].name().to_string();
+            
+            if !new_deps.contains_key(&reader_name) {
+                // 新しいエントリを作成
+                let reader_deps = if let Some(existing_deps) = self.dependency_cache.get(&reader_name) {
+                    existing_deps.clone()
+                } else {
+                    HashSet::new()
+                };
+                new_deps.insert(reader_name.clone(), reader_deps);
+            }
+            
+            // 各書き込みリソースについて依存関係を検査
+            for (writer_index, (_, writer_resources)) in &self.system_resource_dependencies {
+                if reader_index == writer_index {
+                    continue; // 自分自身はスキップ
+                }
                 
-                // このリソースを読み取るシステムが、このシステムに依存するようにする
-                for (reader_index, (reader_resources, _)) in &self.system_resource_dependencies {
-                    if reader_index != index && reader_resources.contains(&write_type_id) {
-                        let reader_name = self.systems[*reader_index].name().to_string();
-                        let reader_deps = self.dependency_cache
-                            .entry(reader_name)
-                            .or_insert_with(HashSet::new);
-                        reader_deps.insert(system_name.clone());
+                let writer_name = self.systems[*writer_index].name().to_string();
+                
+                for &write_type_id in writer_resources {
+                    if reader_resources.contains(&write_type_id) {
+                        // このリソースを読み取るシステムは、書き込むシステムに依存する
+                        if let Some(deps) = new_deps.get_mut(&reader_name) {
+                            deps.insert(writer_name.clone());
+                        }
                     }
                 }
             }
         }
+        
+        // 依存関係キャッシュを更新
+        self.dependency_cache = new_deps;
     }
     
     /// トポロジカルソートのための再帰的訪問関数
@@ -392,9 +451,8 @@ impl SystemRegistry {
     /// 基本リソースの初期化
     pub fn init_core_resources(&mut self) {
         self.add_resource(TimeResource::new());
-        self.add_resource(CoreGameResource::new());
+        self.add_resource(GameStateResource::new());
         self.add_resource(PlayerStateResource::new());
-        self.add_resource(GameConfigResource::new());
     }
     
     /// デバッグ情報を出力
@@ -478,22 +536,43 @@ impl SystemRegistry {
         console::log_1(&JsValue::from_str(&info));
     }
     
-    /// ボード関連のシステムを登録
+    /// ボードシステムを登録
     pub fn register_board_systems(&mut self) {
         use crate::systems::board_systems::{
-            board_init_system,
+            board_init_system, 
             cell_reveal_system,
-            flag_toggle_system,
-            win_condition_system
+            FlagToggleSystem,
+            WinConditionSystem
         };
+        use super::system_scheduler::SystemFn;
         
-        // SystemPriorityをインポートしているか確認
-        use crate::systems::system_registry::SystemPriority;
-
-        // ボードシステムをregisterメソッドで登録
-        self.register(board_init_system);
-        self.register(cell_reveal_system);
-        self.register(flag_toggle_system);
-        self.register(win_condition_system);
+        // システムを追加
+        self.register(WinConditionSystem::new());
+        self.register(FlagToggleSystem::new());
+        
+        // 関数をSystemFnでラップして、Systemトレイトを実装
+        let board_init = SystemFn::new("BoardInitSystem", board_init_system);
+        
+        // SystemFnをRateControlledSystemでラップして登録
+        let rate_controlled_board_init = super::RateControlledSystem::new(
+            board_init,
+            0.0 // 初期化は頻度制限なし
+        );
+        self.register(rate_controlled_board_init);
+        
+        // セル公開システムも同様に処理
+        let cell_reveal = SystemFn::new("CellRevealSystem", cell_reveal_system);
+        let rate_controlled_cell_reveal = super::RateControlledSystem::new(
+            cell_reveal,
+            0.1 // セル公開は0.1秒ごと
+        );
+        self.register(rate_controlled_cell_reveal);
     }
-} 
+}
+
+/// 空のリソース実装（with_resourcesメソッド用）
+struct EmptyResource;
+// ブランケット実装があるので個別実装は削除
+
+// 静的なEmptyResourceのインスタンス
+static mut EMPTY_RESOURCE: EmptyResource = EmptyResource; 

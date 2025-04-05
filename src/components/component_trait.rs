@@ -1,40 +1,36 @@
 /**
- * コンポーネントトレイト定義
+ * コンポーネントトレイト
  * 
- * コンポーネントの標準インターフェースを定義します
+ * ECSパターンのコンポーネントを定義する基本トレイト
  */
 use std::any::{Any, TypeId};
-use crate::entities::{EntityId, EntityManager};
+use std::fmt::Debug;
+use crate::entities::EntityId;
 use serde::{Serialize, Deserialize};
 
-/// すべてのコンポーネントが実装すべき基本トレイト
-pub trait Component: 'static + Send + Sync + Any + Clone + std::fmt::Debug {
-    /// コンポーネントが初期化された時に呼ばれる
+/// コンポーネントの基本インターフェース
+/// 
+/// 全てのコンポーネントはこのトレイトを実装する必要があります。
+/// 型消去とダウンキャストを可能にするため、Any トレイトも実装して
+/// Box化されたコンポーネントを保存・取得できるようにしています。
+pub trait Component: Debug + 'static {
+    /// Any型のイミュータブル参照にキャスト
+    fn as_any(&self) -> &dyn Any;
+    
+    /// Any型のミュータブル参照にキャスト
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    
+    /// このコンポーネントのクローンを作成し、Box化して返す
+    fn clone_box(&self) -> Box<dyn Component>;
+    
+    /// エンティティに追加された時に呼ばれる
     fn on_init(&mut self, _entity_id: EntityId) {}
     
-    /// コンポーネントが削除される前に呼ばれる
+    /// エンティティから取り除かれる時に呼ばれる
     fn on_remove(&mut self, _entity_id: EntityId) {}
     
-    /// エンティティに追加された後に呼ばれる
-    fn on_added(&mut self, _entity_id: EntityId) {}
-    
-    /// エンティティが持つ他のコンポーネントと相互作用が必要な場合に呼ばれる
-    fn on_entity_ready(&mut self, _entity_id: EntityId, _entity_manager: &EntityManager) {}
-    
-    /// コンポーネントの一意の識別子を返す
-    fn type_name(&self) -> &'static str {
-        std::any::type_name::<Self>()
-    }
-    
-    /// シリアライズ可能かどうかを返す
-    fn is_serializable(&self) -> bool {
-        false
-    }
-    
-    /// このコンポーネントが依存する他のコンポーネントの型IDのリストを返す
-    fn dependencies(&self) -> Vec<TypeId> {
-        Vec::new()
-    }
+    /// エンティティが削除される時に呼ばれる
+    fn on_entity_destroy(&mut self, _entity_id: EntityId) {}
 }
 
 /// シリアライズ可能なコンポーネント用の拡張トレイト

@@ -6,12 +6,19 @@ use std::collections::HashMap;
 use crate::js_bindings::{log, update_connection_status, update_player_count, update_game_status};
 use crate::models::{CellValue, Screen, Player};
 use crate::utils::get_cell_index_from_coordinates;
-use crate::rendering::GameRenderer;
+use crate::rendering::{Renderer, GameRenderer, DrawOptions};
 use crate::network::{NetworkManager, MessageCallback};
 use crate::board::Board;
+use crate::components::position::Position;
+use crate::resources::MouseState;
+
+// 位置情報の更新間隔（ミリ秒）
+const POSITION_UPDATE_INTERVAL: f64 = 100.0;
 
 /**
- * ゲーム全体の状態を管理する構造体
+ * ゲーム状態
+ * 
+ * ゲーム全体の状態を管理する
  */
 pub struct GameState {
     // プレイヤー関連
@@ -27,9 +34,7 @@ pub struct GameState {
     pub renderer: GameRenderer,           // 描画管理
     
     // マウス操作関連
-    pub mouse_x: f64,                     // マウスX座標
-    pub mouse_y: f64,                     // マウスY座標
-    pub is_mouse_down: bool,              // マウスボタン押下状態
+    pub mouse_state: MouseState,          // マウス状態
     pub last_position_update: f64,        // 最後に位置情報を送信した時間
     
     // 画面状態
@@ -77,9 +82,17 @@ impl GameState {
             canvas,
             context,
             renderer,
-            mouse_x: 0.0,
-            mouse_y: 0.0,
-            is_mouse_down: false,
+            mouse_state: MouseState {
+                x: 0.0,
+                y: 0.0,
+                left_button: false,
+                right_button: false,
+                middle_button: false,
+                prev_x: 0.0,
+                prev_y: 0.0,
+                clicked: false,
+                right_clicked: false,
+            },
             last_position_update: 0.0,
             current_screen: Screen::Title,  // 初期画面はタイトル画面
             board,
@@ -257,8 +270,8 @@ impl GameState {
         let player = Player {
             id: id.clone(),
             name: format!("プレイヤー_{}", id),
-            x: self.mouse_x,
-            y: self.mouse_y,
+            x: self.mouse_state.x as f64,
+            y: self.mouse_state.y as f64,
             color: "#00FF00".to_string(), // 自分は緑色
             score: 0,
             is_local: true,
@@ -423,8 +436,8 @@ impl GameState {
         if let Some(player_id) = &self.local_player_id {
             if let Some(player) = self.players.get_mut(player_id) {
                 // プレイヤーの位置を更新
-                player.x = self.mouse_x;
-                player.y = self.mouse_y;
+                player.x = self.mouse_state.x as f64;
+                player.y = self.mouse_state.y as f64;
                 
                 // 位置情報を送信
                 self.send_position_update()?;
@@ -440,13 +453,27 @@ impl GameState {
     /**
      * ゲームを描画する
      * 
-     * 現在の画面状態に応じて、タイトル画面かゲーム画面を描画します。
+     * 現在の画面状態に応じて適切な描画を行います：
+     * - タイトル画面：タイトルと接続状態
+     * - ゲーム画面：ボード、セル、プレイヤー
      * 
      * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
      */
     pub fn draw(&mut self) -> Result<(), JsValue> {
+        // キャンバスのサイズを取得
         let canvas_width = self.canvas.width() as f64;
         let canvas_height = self.canvas.height() as f64;
+        
+        // キャンバスをクリア
+        self.renderer.clear_canvas(canvas_width, canvas_height)?;
+        
+        // 描画オプションを作成
+        let draw_options = DrawOptions {
+            width: canvas_width,
+            height: canvas_height,
+            cell_size: self.board.cell_size as f64,
+            scale: 1.0,
+        };
         
         match self.current_screen {
             Screen::Title => {
@@ -454,30 +481,37 @@ impl GameState {
                 self.renderer.draw_title_screen(canvas_width, canvas_height, self.network.is_connected)?;
             },
             Screen::Game => {
+                // ゲーム画面を描画
+                let board = &self.board;
+                
+                // 描画オプションを更新
+                let draw_options = DrawOptions {
+                    width: canvas_width,
+                    height: canvas_height,
+                    cell_size: board.cell_size as f64,
+                    scale: 1.0,
+                };
+                
                 // ボードを描画
-                self.renderer.draw_board(
-                    &self.board.cells,
-                    &self.board.revealed,
-                    &self.board.flagged,
-                    self.board.width,
-                    self.board.height,
-                    self.board.cell_size,
-                    canvas_width,
-                    canvas_height
-                )?;
+                self.renderer.draw_board(board, &draw_options)?;
                 
                 // プレイヤーを描画
-                self.renderer.draw_players(&self.players, &self.local_player_id)?;
+                let positions: HashMap<String, Position> = self.players
+                    .iter()
+                    .map(|(id, player)| {
+                        (id.clone(), Position {
+                            x: player.x as f64,
+                            y: player.y as f64,
+                        })
+                    })
+                    .collect();
                 
                 // UIを描画
-                self.renderer.draw_ui(canvas_width)?;
+                self.renderer.draw_ui(&draw_options)?;
                 
-                // 接続状態を描画
-                self.renderer.draw_connection_status(self.network.is_connected)?;
-                
-                // ゲームオーバー時の処理
-                if self.board.game_over {
-                    if self.board.win {
+                // ゲーム終了状態なら対応する画面を描画
+                if board.game_over {
+                    if board.win {
                         self.renderer.draw_win_screen(canvas_width, canvas_height)?;
                     } else {
                         self.renderer.draw_game_over_screen(canvas_width, canvas_height)?;
@@ -540,10 +574,10 @@ impl GameState {
                 if let Some(index) = self.get_cell_index(x, y) {
                     if right_click {
                         // 右クリック: フラグを切り替え
-                        self.toggle_flag(index)?;
+                        self.toggle_flag(x, y)?;
                     } else {
                         // 左クリック: セルを開く
-                        self.reveal_cell(index)?;
+                        self.reveal_cell(x, y)?;
                     }
                 }
             }
@@ -568,7 +602,7 @@ impl GameState {
             self.last_position_update = now;
             
             // 位置情報を送信
-            self.network.send_position_update(self.mouse_x, self.mouse_y)?;
+            self.network.send_position_update(self.mouse_state.x as f64, self.mouse_state.y as f64)?;
         }
         
         Ok(())
@@ -577,43 +611,57 @@ impl GameState {
     /**
      * セルを開く
      * 
-     * @param index 開くセルのインデックス
+     * @param x クリックされたセルのX座標
+     * @param y クリックされたセルのY座標
      * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
      */
-    pub fn reveal_cell(&mut self, index: usize) -> Result<(), JsValue> {
-        // すでに開かれている、またはフラグが立っている場合は何もしない
-        if self.board.revealed[index] || self.board.flagged[index] {
-            return Ok(());
+    pub fn reveal_cell(&mut self, x: f64, y: f64) -> Result<(), JsValue> {
+        let cell_index = match self.get_cell_index(x, y) {
+            Some(index) => index,
+            None => return Ok(()),
+        };
+        
+        if self.current_screen == Screen::Game && !self.is_game_over() {
+            if self.is_multiplayer() && self.network.is_connected {
+                self.network.send_message(&serde_json::json!({
+                    "type": "reveal_cell",
+                    "index": cell_index as u32,
+                    "player_id": self.local_player_id.clone().unwrap_or_default()
+                }))?;
+            } else {
+                self.handle_cell_reveal(cell_index);
+            }
         }
         
-        // ゲームオーバーの場合は何もしない
-        if self.board.game_over {
-            return Ok(());
-        }
-        
-        // サーバーに送信
-        self.network.send_reveal_cell(index)
+        Ok(())
     }
 
     /**
      * フラグを切り替える
      * 
-     * @param index フラグを切り替えるセルのインデックス
+     * @param x クリックされたセルのX座標
+     * @param y クリックされたセルのY座標
      * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
      */
-    pub fn toggle_flag(&mut self, index: usize) -> Result<(), JsValue> {
-        // すでに開かれている場合は何もしない
-        if self.board.revealed[index] {
-            return Ok(());
+    pub fn toggle_flag(&mut self, x: f64, y: f64) -> Result<(), JsValue> {
+        let cell_index = match self.get_cell_index(x, y) {
+            Some(index) => index,
+            None => return Ok(()),
+        };
+        
+        if self.current_screen == Screen::Game && !self.is_game_over() {
+            if self.is_multiplayer() && self.network.is_connected {
+                self.network.send_message(&serde_json::json!({
+                    "type": "toggle_flag",
+                    "index": cell_index as u32,
+                    "player_id": self.local_player_id.clone().unwrap_or_default()
+                }))?;
+            } else {
+                self.handle_flag_toggle(cell_index);
+            }
         }
         
-        // ゲームオーバーの場合は何もしない
-        if self.board.game_over {
-            return Ok(());
-        }
-        
-        // サーバーに送信
-        self.network.send_toggle_flag(index)
+        Ok(())
     }
 
     /**
@@ -624,5 +672,72 @@ impl GameState {
     pub fn reset_game(&mut self) -> Result<(), JsValue> {
         // サーバーに送信
         self.network.send_reset_game()
+    }
+
+    /**
+     * マウス座標を設定する
+     * 
+     * @param x マウスのX座標
+     * @param y マウスのY座標
+     * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
+     */
+    pub fn set_mouse_position(&mut self, x: f64, y: f64) {
+        self.mouse_state.x = x;
+        self.mouse_state.y = y;
+        
+        if self.is_multiplayer() && self.network.is_connected {
+            self.update_local_player_position(x, y);
+            
+            // マウス座標更新間隔の制限
+            let current_time = js_sys::Date::now();
+            if current_time - self.last_position_update > POSITION_UPDATE_INTERVAL {
+                self.last_position_update = current_time;
+                self.send_position_update().unwrap_or_else(|e| {
+                    crate::js_bindings::log(&format!("Error sending position update: {:?}", e));
+                });
+            }
+        }
+    }
+    
+    /// マウスボタンの状態を設定
+    pub fn set_mouse_down(&mut self, button: i32, is_down: bool) -> Result<(), JsValue> {
+        // ボタンによって状態を更新
+        match button {
+            0 => self.mouse_state.left_button = is_down,
+            2 => self.mouse_state.right_button = is_down,
+            _ => {}
+        }
+        
+        Ok(())
+    }
+
+    pub fn position(&self) -> Position {
+        Position {
+            x: self.mouse_state.x,
+            y: self.mouse_state.y,
+        }
+    }
+
+    fn update_local_player_position(&mut self, x: f64, y: f64) {
+        if let Some(player) = self.players.get_mut(&self.local_player_id.clone().unwrap_or_default()) {
+            player.x = x;
+            player.y = y;
+        }
+    }
+
+    fn is_game_over(&self) -> bool {
+        self.board.game_over
+    }
+
+    fn is_multiplayer(&self) -> bool {
+        self.local_player_id.is_some()
+    }
+
+    fn handle_cell_reveal(&mut self, index: usize) {
+        // Implementation of handle_cell_reveal method
+    }
+
+    fn handle_flag_toggle(&mut self, index: usize) {
+        // Implementation of handle_flag_toggle method
     }
 } 

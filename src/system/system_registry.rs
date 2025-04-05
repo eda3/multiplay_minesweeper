@@ -1,6 +1,11 @@
 use std::collections::HashMap;
 use crate::resources::ResourceManager;
 use std::fmt;
+use crate::systems::optimized::system_trait::System as OptimizedSystem;
+use crate::systems::board_systems::board_init_system::board_init_system;
+use crate::systems::board_systems::cell_reveal_system::cell_reveal_system;
+use crate::systems::board_systems::flag_toggle_system::flag_toggle_system;
+use crate::systems::board_systems::win_condition_system::win_condition_system;
 
 /// システムの実行フェーズ
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -288,9 +293,8 @@ impl SystemRegistry {
                 fn run(&mut self, resources: &mut ResourceManager) {
                     // ボード初期化システムを実行
                     if let Err(err) = board_init_system(
-                        &mut resources.entity_manager,
-                        &mut resources.resources,
-                        crate::systems::system_registry::DeltaTime(0.0)
+                        resources,
+                        0.0
                     ) {
                         web_sys::console::error_1(&err);
                     }
@@ -312,9 +316,8 @@ impl SystemRegistry {
                 fn run(&mut self, resources: &mut ResourceManager) {
                     // セル公開システムを実行
                     if let Err(err) = cell_reveal_system(
-                        &mut resources.entity_manager,
-                        &mut resources.resources,
-                        crate::systems::system_registry::DeltaTime(0.0)
+                        resources,
+                        0.0
                     ) {
                         web_sys::console::error_1(&err);
                     }
@@ -336,9 +339,8 @@ impl SystemRegistry {
                 fn run(&mut self, resources: &mut ResourceManager) {
                     // フラグトグルシステムを実行
                     if let Err(err) = flag_toggle_system(
-                        &mut resources.entity_manager,
-                        &mut resources.resources,
-                        crate::systems::system_registry::DeltaTime(0.0)
+                        resources,
+                        0.0
                     ) {
                         web_sys::console::error_1(&err);
                     }
@@ -364,9 +366,10 @@ impl SystemRegistry {
                 fn run(&mut self, resources: &mut ResourceManager) {
                     // 勝利条件チェックシステムを実行
                     if let Err(err) = win_condition_system(
-                        &mut resources.entity_manager,
-                        &mut resources.resources,
-                        crate::systems::system_registry::DeltaTime(0.0)
+                        resources,
+                        0.0,
+                        0, // スコア
+                        0.0 // 時間
                     ) {
                         web_sys::console::error_1(&err);
                     }

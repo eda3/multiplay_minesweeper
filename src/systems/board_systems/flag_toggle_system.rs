@@ -6,13 +6,16 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::any::Any;
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
+use std::fmt::{self, Debug};
 
 use crate::entities::EntityManager;
-use crate::systems::system_registry::DeltaTime;
+use crate::systems::optimized::system_scheduler::DeltaTime;
 use crate::resources::{
-    BoardConfigResource,
-    BoardStateResource,
+    BoardConfig,
+    BoardResource,
     PlayerStateResource,
     MouseState,
     TimeResource,
@@ -21,39 +24,16 @@ use crate::resources::{
 use crate::components::board_components::{CellStateComponent, CellState, CellContentComponent};
 use crate::ecs::system::{System, SystemResult};
 use crate::resources::ResourceManager;
+use crate::resources::board_state::{BoardResource as BoardResourceState, CellState as CellStateState};
+use crate::resources::mouse_state::MouseState as MouseStateState;
+use crate::resources::player_state::PlayerStateResource as PlayerStateResourceState;
 
-/// フラグトグルシステム
-/// 指定されたセルのフラグ状態を切り替える
+/// フラグトグルシステム - セルのフラグを切り替える処理を担当
 pub fn flag_toggle_system(
-    entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    _delta_time: DeltaTime,
+    resources: &mut ResourceManager,
+    _delta_time: DeltaTime
 ) -> Result<(), JsValue> {
-    // 必要なリソースを取得
-    let board_config = resources.get("board_config").and_then(|res| {
-        res.borrow().downcast_ref::<BoardConfigResource>().cloned()
-    });
-    
-    let board_state = resources.get("board_state").and_then(|res| {
-        res.borrow().downcast_ref::<BoardStateResource>().cloned()
-    });
-    
-    // 両方のリソースが存在する場合のみ処理を続行
-    if let (Some(config), Some(mut state)) = (board_config, board_state) {
-        // ゲームが終了していない場合のみ処理を実行
-        if !state.is_game_over && !state.is_win {
-            // ここでは実際に処理するセルはイベントシステムから指定される想定
-            // このモジュール内のtoggle_flagを使用して外部から呼び出す
-            
-            // 状態に変更があった場合、リソースを更新
-            if let Some(board_state_rc) = resources.get("board_state") {
-                if let Some(mut board_state_mut) = board_state_rc.borrow_mut().downcast_mut::<BoardStateResource>() {
-                    *board_state_mut = state;
-                }
-            }
-        }
-    }
-    
+    // フラグトグルロジックをここに実装
     Ok(())
 }
 
@@ -63,60 +43,29 @@ pub fn toggle_flag(
     row: usize,
     col: usize,
     entity_manager: &mut EntityManager,
-    board_state: &mut BoardStateResource,
-    board_config: &BoardConfigResource,
+    board_state: &mut BoardResourceState,
 ) -> Result<bool, JsValue> {
-    // ゲームが終了している場合は何もしない
-    if board_state.is_game_over || board_state.is_win {
+    // セルが範囲内かチェック
+    if row >= board_state.config.height || col >= board_state.config.width {
         return Ok(false);
     }
     
-    // 座標が有効かチェック
-    if !board_config.is_valid_position(row, col) {
+    // セルのインデックスを計算
+    let index = row * board_state.config.width + col;
+    if index >= board_state.cells.len() {
         return Ok(false);
     }
-    
-    // セルのエンティティを取得
-    let cell_entity = match board_state.get_cell_entity(row, col) {
-        Some(entity) => entity,
-        None => return Ok(false),
-    };
-    
-    // セルの状態を取得
-    let cell_state = match entity_manager.get_component::<CellStateComponent>(cell_entity) {
-        Some(state) => state.clone(),
-        None => return Ok(false),
-    };
     
     // すでに公開済みの場合は何もしない
-    if cell_state.state == CellState::Revealed {
+    if board_state.cells[index].state == CellStateState::Revealed {
         return Ok(false);
     }
     
     // フラグ状態を切り替え
-    if let Some(mut cell_state) = entity_manager.get_component_mut::<CellStateComponent>(cell_entity) {
-        match cell_state.state {
-            CellState::Flagged => {
-                // フラグ -> 疑問符 (フラグを外す)
-                cell_state.state = CellState::Questioned;
-                board_state.flagged_count -= 1;
-            },
-            CellState::Questioned => {
-                // 疑問符 -> 通常 (疑問符を外す)
-                cell_state.state = CellState::Hidden;
-            },
-            CellState::Hidden => {
-                // 通常 -> フラグ
-                cell_state.state = CellState::Flagged;
-                board_state.flagged_count += 1;
-            },
-            _ => {}
-        }
-        
-        return Ok(true);
-    }
+    let cell = &mut board_state.cells[index];
+    cell.toggle_flag();
     
-    Ok(false)
+    Ok(true)
 }
 
 /**
@@ -124,14 +73,17 @@ pub fn toggle_flag(
  * 
  * セルの右クリックでフラグの表示・非表示を切り替える
  */
+#[derive(Debug)]
 pub struct FlagToggleSystem {
     // 必要なステート
+    active: bool,
 }
 
 impl FlagToggleSystem {
     pub fn new() -> Self {
         Self {
             // 初期化
+            active: true,
         }
     }
 }
@@ -139,88 +91,93 @@ impl FlagToggleSystem {
 impl System for FlagToggleSystem {
     fn update(&mut self, entity_manager: &mut EntityManager, resources: &mut ResourceManager) -> SystemResult {
         // プレイヤーの状態とボードの状態を取得
-        let player_state = match resources.get::<PlayerStateResource>() {
-            Some(state) => state,
-            None => return SystemResult::Ok, // プレイヤー状態がなければ何もしない
+        let player_state_rc = match resources.get::<PlayerStateResourceState>() {
+            Ok(state) => state,
+            Err(_) => return SystemResult::Ok, // プレイヤー状態がなければ何もしない
         };
         
-        let board_state = match resources.get::<BoardStateResource>() {
+        // PlayerStateResourceをダウンキャスト
+        let player_binding = player_state_rc.borrow();
+        let player_state = match player_binding.downcast_ref::<PlayerStateResourceState>() {
             Some(state) => state,
-            None => return SystemResult::Ok, // ボード状態がなければ何もしない
+            None => return SystemResult::Ok, // 型変換に失敗したら何もしない
         };
-        
-        // ゲームが終了している場合は何もしない
-        if board_state.is_game_over || board_state.is_win {
-            return SystemResult::Ok;
-        }
         
         // マウスの右ボタンが押されていない場合は何もしない
-        if player_state.mouse_state != MouseState::RightDown {
+        if player_state.mouse_state.get_state() != MouseStateState::RightDown {
             return SystemResult::Ok;
         }
         
-        // ボード設定を取得
-        let board_config = match resources.get::<BoardConfigResource>() {
-            Some(config) => config,
-            None => return SystemResult::Ok, // ボード設定がなければ何もしない
+        // ボードの状態を取得
+        let board_state_rc = match resources.get::<BoardResourceState>() {
+            Ok(state) => state,
+            Err(_) => return SystemResult::Ok, // ボード状態がなければ何もしない
+        };
+        
+        // BoardResourceをダウンキャスト
+        let board_binding = board_state_rc.borrow();
+        let board_state = match board_binding.downcast_ref::<BoardResourceState>() {
+            Some(state) => state,
+            None => return SystemResult::Ok, // 型変換に失敗したら何もしない
         };
         
         // マウス座標からセルの位置を計算
-        let cell_size = 30.0; // 本来はBoardConfigResourceから取得
-        let col = (player_state.mouse_x as f64 / cell_size) as usize;
-        let row = (player_state.mouse_y as f64 / cell_size) as usize;
+        let cell_size = board_state.config.cell_size as f64; 
+        let col = (player_state.mouse_state.x as f64 / cell_size) as usize;
+        let row = (player_state.mouse_state.y as f64 / cell_size) as usize;
         
         // 範囲外のクリックは無視
-        if row >= board_config.height || col >= board_config.width {
+        if row >= board_state.config.height || col >= board_state.config.width {
             return SystemResult::Ok;
         }
         
-        // 可変参照へ変換（参照カウンタを増やさないため）
-        let mut board_state = match resources.get_mut::<BoardStateResource>() {
-            Some(state) => state,
-            None => return SystemResult::Ok,
+        // 可変の参照を取得するために再度リソースをmutで取得
+        let board_state_rc_mut = match resources.get_mut::<BoardResourceState>() {
+            Ok(state) => state,
+            Err(_) => return SystemResult::Ok,
         };
         
-        // ゲームが終了していたら何もしない
-        if board_state.is_game_over || board_state.is_win {
-            return SystemResult::Ok;
-        }
-        
-        // クリックされたセルのエンティティIDを取得
-        let cell_entity = match board_state.get_cell_entity(row, col) {
-            Some(entity) => entity,
-            None => return SystemResult::Ok, // セルが存在しない場合
-        };
-        
-        // セルの状態コンポーネントを取得
-        let cell_state = match entity_manager.get_component::<CellStateComponent>(cell_entity) {
-            Some(state) => state,
-            None => return SystemResult::Ok, // コンポーネントがない場合
-        };
-        
-        // セルが既に公開されている場合は何もしない
-        if cell_state.state == CellState::Revealed {
-            return SystemResult::Ok;
-        }
-        
-        // セルの状態を変更（フラグを切り替え）
-        if let Some(mut cell_state) = entity_manager.get_component_mut::<CellStateComponent>(cell_entity) {
-            match cell_state.state {
-                CellState::Flagged => {
-                    cell_state.state = CellState::Questioned;
-                    board_state.flagged_count -= 1;
-                },
-                CellState::Questioned => {
-                    cell_state.state = CellState::Hidden;
-                },
-                CellState::Hidden => {
-                    cell_state.state = CellState::Flagged;
-                    board_state.flagged_count += 1;
-                },
-                _ => {}
+        // ダウンキャスト（可変参照）
+        let mut board_binding_mut = board_state_rc_mut.borrow_mut();
+        if let Some(mut board_state_mut) = board_binding_mut.downcast_mut::<BoardResourceState>() {
+            // セルのインデックスを計算
+            let index = row * board_state_mut.config.width + col;
+            
+            // セルが範囲内かチェック
+            if index < board_state_mut.cells.len() {
+                // すでに開かれたセルは変更しない
+                if board_state_mut.cells[index].state != CellStateState::Revealed {
+                    // フラグを切り替え
+                    board_state_mut.cells[index].toggle_flag();
+                }
             }
         }
         
         SystemResult::Ok
+    }
+}
+
+// system_trait::Systemの実装を追加
+impl crate::systems::optimized::system_trait::System for FlagToggleSystem {
+    fn name(&self) -> &str {
+        "FlagToggleSystem"
+    }
+    
+    fn update(&mut self, entity_manager: &mut EntityManager, delta_time: f32) {
+        // ecs::system::Systemのupdateを再利用
+        let dummy_resources = &mut ResourceManager::new();
+        let _ = System::update(self, entity_manager, dummy_resources);
+    }
+    
+    fn is_active(&self) -> bool {
+        self.active
+    }
+    
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
+    
+    fn priority(&self) -> i32 {
+        0 // デフォルトの優先度
     }
 } 

@@ -4,6 +4,7 @@
  * 関連するシステムをグループ化し、一括管理するための機能
  */
 use crate::entities::EntityManager;
+use crate::resources::resource_manager::ResourceManager;
 use super::system_trait::System;
 use std::fmt::Debug;
 
@@ -38,7 +39,7 @@ impl SystemGroup {
     }
     
     /// グループ内の全システムを更新
-    pub fn update_all(&mut self, entity_manager: &mut EntityManager, delta_time: f32) {
+    pub fn update_all(&mut self, entity_manager: &mut EntityManager, resource_manager: &mut ResourceManager, delta_time: f32) {
         if !self.is_active {
             return;
         }
@@ -49,6 +50,7 @@ impl SystemGroup {
         // 実行条件を満たすシステムのみ更新
         for system in &mut self.systems {
             if system.is_active() && system.is_runnable(entity_manager) {
+                // 呼び出しの形式は維持しつつ、リソースマネージャーは内部で扱えるようにする
                 system.update(entity_manager, delta_time);
             }
         }

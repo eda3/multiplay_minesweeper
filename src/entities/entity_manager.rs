@@ -406,55 +406,22 @@ impl EntityManager {
     
     /// エンティティにコンポーネントを追加
     pub fn add_component<T: Component>(&mut self, entity_id: EntityId, mut component: T) -> Result<(), &'static str> {
-        // 事前にエンティティの存在確認
         if !self.entities.contains_key(&entity_id) {
             return Err("エンティティが存在しません");
         }
         
-        // コンポーネントの初期化
-        component.on_init(entity_id);
+        let type_id = TypeId::of::<T>();
         
-        // 依存関係を取得
-        let dependencies = component.dependencies();
-        
-        // 依存関係の確認とファクトリー情報の取得（事前に行い、後で可変参照を取る前に済ませる）
-        let missing_dependencies = dependencies.iter()
-            .filter(|&&type_id| !self.entity_has_component_by_type_id(entity_id, type_id))
-            .collect::<Vec<_>>();
-            
-        // ファクトリー情報をコピー（所有権の問題を回避）
-        let has_factory = self.component_factory.is_some();
-        
-        // 依存関係の処理
-        if !missing_dependencies.is_empty() {
-            if !has_factory {
-                return Err("コンポーネントファクトリーが設定されていません");
-            }
-            
-            for &type_id in &missing_dependencies {
-                // ここでファクトリーを使用して依存コンポーネントを作成
-                let factory = self.component_factory.as_ref().unwrap();
-                if !factory.is_registered(*type_id) {
-                    return Err("依存コンポーネントがファクトリーに登録されていません");
-                }
-                
-                // コンポーネントを作成
-                let result = factory.create_default(*type_id);
-                match result {
-                    Ok(component) => {
-                        // エンティティを取得して依存コンポーネントを追加
-                        if let Some(entity) = self.entities.get_mut(&entity_id) {
-                            entity.add_component_boxed(*type_id, component);
-                        } else {
-                            return Err("エンティティが見つかりません");
-                        }
-                    },
-                    Err(_) => return Err("デフォルトコンポーネントの作成に失敗しました"),
-                }
-            }
+        // 既に同じ型のコンポーネントがあるかチェック
+        if self.entity_has_component_by_type_id(entity_id, type_id) {
+            return Err("既に同じ型のコンポーネントが存在します");
         }
         
-        // メインのコンポーネントを追加
+        // 依存関係を確認する処理はコメントアウト
+        // 必要な場合はComponentトレイトに依存関係メソッドを追加
+        // let dependencies = component.dependencies();
+        
+        // エンティティにコンポーネントを追加
         if let Some(entity) = self.entities.get_mut(&entity_id) {
             entity.add_component(component);
         } else {
@@ -467,7 +434,7 @@ impl EntityManager {
         // コンポーネント追加イベントを呼び出し
         if let Some(entity) = self.entities.get_mut(&entity_id) {
             if let Some(comp) = entity.get_component_mut::<T>() {
-                comp.on_added(entity_id);
+                comp.on_init(entity_id); // on_addedの代わりにon_initを使用
             }
         }
         

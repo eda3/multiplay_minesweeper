@@ -3,7 +3,8 @@
  * 
  * マインスイーパーのセルをエンティティとして表現
  */
-use crate::components::{CellContent, CellState, Position};
+use crate::components::{CellContent, Position};
+use crate::components::cell::CellState;
 use crate::entities::entity::{Entity, EntityId};
 use crate::entities::entity_manager::EntityBuilder;
 
@@ -133,7 +134,7 @@ pub mod cell_operations {
     pub fn get_cell_state(manager: &EntityManager, id: EntityId) -> Option<CellState> {
         manager.get_entity(id)
             .and_then(|entity| entity.get_component::<CellState>())
-            .cloned()
+            .map(|r| r.clone())
     }
     
     /// セルの位置を取得

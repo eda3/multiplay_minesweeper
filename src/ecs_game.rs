@@ -12,6 +12,10 @@ use crate::resources::{
     Resource
 };
 use crate::ecs::World;
+use crate::resources::{
+    GameStateResource, 
+    BoardResource,
+};
 
 /// ECSベースのゲームエンジン
 /// リソースとシステムを管理し、ゲームループを実行する
@@ -85,10 +89,10 @@ impl EcsGame {
 
         // CoreGameResourceのチェック - ゲームが終了したかどうか
         if let Some(core_game) = self.world.get_resource::<CoreGameResource>() {
-            let phase = core_game.phase();
+            let phase = core_game.phase.clone();
             if let GamePhase::GameOver { .. } = phase {
                 // ゲームオーバー処理
-                println!("Game Over! Score: {}", core_game.score());
+                println!("Game Over! Score: {}", core_game.score);
             }
         }
     }
@@ -132,7 +136,7 @@ impl EcsGame {
     /// ゲームを終了
     pub fn end_game(&mut self, win: bool) {
         if let Some(core_game) = self.world.get_resource_mut::<CoreGameResource>() {
-            core_game.end_game(win);
+            core_game.set_game_over(win);
         }
     }
 
@@ -140,7 +144,7 @@ impl EcsGame {
     pub fn game_phase(&self) -> GamePhase {
         self.world
             .get_resource::<CoreGameResource>()
-            .map_or(GamePhase::Ready, |core| core.phase())
+            .map_or(GamePhase::StartScreen, |core| core.phase.clone())
     }
     
     /// Worldへの参照を取得
@@ -157,6 +161,13 @@ impl EcsGame {
 impl Default for EcsGame {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Cloneトレイトの実装（簡易的な実装として、新しいインスタンスを作成）
+impl Clone for EcsGame {
+    fn clone(&self) -> Self {
+        EcsGame::new()
     }
 }
 
@@ -198,7 +209,7 @@ mod tests {
         assert!(game.get_resource::<GameConfigResource>().is_some());
 
         // 初期状態の確認
-        assert_eq!(game.game_phase(), GamePhase::Ready);
+        assert_eq!(game.game_phase(), GamePhase::StartScreen);
     }
 
     #[test]
@@ -215,7 +226,7 @@ mod tests {
         let system_id = game.add_system(update_system);
         
         // 初期状態の確認
-        assert_eq!(game.game_phase(), GamePhase::Ready);
+        assert_eq!(game.game_phase(), GamePhase::StartScreen);
         
         // ゲーム開始
         game.start_game();
@@ -278,7 +289,7 @@ mod tests {
         game.update();
         
         // 各システムが実行されたはず
-        assert_eq!(game.game_phase(), GamePhase::Ready);
+        assert_eq!(game.game_phase(), GamePhase::StartScreen);
         
         // スタートゲーム
         game.start_game();

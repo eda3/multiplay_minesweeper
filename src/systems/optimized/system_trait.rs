@@ -8,6 +8,27 @@ use super::resource_dependency::ResourceDependency;
 use std::fmt::Debug;
 use std::any::TypeId;
 
+/// システムの一意な識別子
+pub type SystemId = String;
+
+/// システムの実行フェーズ
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SystemPhase {
+    /// 初期化フェーズ
+    Startup,
+    /// 入力処理フェーズ
+    Input,
+    /// 更新フェーズ
+    Update,
+    /// 描画フェーズ
+    Render,
+    /// 後処理フェーズ
+    Cleanup,
+}
+
+/// システムの優先度（低いほど先に実行される）
+pub type SystemPriority = i32;
+
 /// 拡張されたシステムトレイト
 pub trait System: Send + Sync + 'static + Debug {
     /// システムの一意の名前

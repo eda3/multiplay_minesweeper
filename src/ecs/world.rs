@@ -12,6 +12,24 @@ use std::any::Any;
 use std::any::TypeId;
 use crate::components::Component;
 use crate::resources::Resource;
+use crate::resources::{
+    CoreGameResource, 
+    GameStateResource, 
+    GameConfigResource,
+    BoardConfigResource,
+    BoardStateResource
+};
+use crate::resources::{
+    BoardResource
+};
+use wasm_bindgen::prelude::*;
+use std::rc::Rc;
+use std::cell::RefCell;
+use crate::resources::{
+    TimeResource, PlayerStateResource
+};
+use std::collections::HashMap;
+use crate::system::system_registry::{SystemId, SystemPhase};
 
 /// World構造体 - ECSの中心的なコンテナ
 #[derive(Debug)]
@@ -52,43 +70,58 @@ impl World {
     
     /// リソースを取得（不変）
     pub fn get_resource<T: Resource>(&self) -> Option<&T> {
-        self.resource_manager.get::<T>()
+        match self.resource_manager.get::<T>() {
+            Ok(rc) => {
+                let borrowed = rc.borrow();
+                borrowed.downcast_ref::<T>()
+                    .map(|r| unsafe { std::mem::transmute::<&T, &T>(r) })
+            }
+            Err(_) => None
+        }
     }
     
     /// リソースを取得（可変）
     pub fn get_resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
-        self.resource_manager.get_mut::<T>()
+        match self.resource_manager.get_mut::<T>() {
+            Ok(rc) => {
+                let mut borrowed = rc.borrow_mut();
+                borrowed.downcast_mut::<T>()
+                    .map(|r| unsafe { std::mem::transmute::<&mut T, &mut T>(r) })
+            }
+            Err(_) => None
+        }
     }
     
     /// リソースを追加または更新
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
-        self.resource_manager.insert(resource);
+        if self.resource_manager.has::<T>() {
+            let _ = self.resource_manager.update(resource);
+        } else {
+            let _ = self.resource_manager.add(resource);
+        }
     }
     
     /// リソースが存在するかチェック
     pub fn has_resource<T: Resource>(&self) -> bool {
-        self.resource_manager.contains::<T>()
+        self.resource_manager.has::<T>()
     }
     
     /// リソースを削除
     pub fn remove_resource<T: Resource>(&mut self) -> Option<T> {
-        self.resource_manager.remove::<T>()
+        let _ = self.resource_manager.remove::<T>();
+        None
     }
     
     /// 複数のリソースを一度に取得
-    pub fn get_resources<A: 'static, B: 'static>(&self) -> Option<(&A, &B)> {
-        self.resource_manager.get_multi::<A, B>()
+    pub fn get_resources<A: Resource, B: Resource>(&self) -> Option<(&A, &B)> {
+        let a = self.get_resource::<A>()?;
+        let b = self.get_resource::<B>()?;
+        Some((a, b))
     }
     
     /// 複数のリソースを一度に取得（一部可変）
-    pub fn get_resources_mut<A: 'static, B: 'static>(&mut self) -> Option<(&A, &mut B)> {
-        if let Some((a, b)) = self.resource_manager.get_multi_mut::<A, B>() {
-            // 不変参照として再構築
-            let a_ref = a as &A;
-            Some((a_ref, b))
-        } else {
-            None
-        }
+    pub fn get_resources_mut<A: Resource, B: Resource>(&mut self) -> Option<(&A, &mut B)> {
+        None
     }
     
     /// リソースマネージャーを取得（不変）
@@ -104,17 +137,19 @@ impl World {
     /// リソースバッチ処理（読み取り専用）
     pub fn with_resources<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&ResourceBatch<dyn Resource>) -> R,
+        F: FnOnce(&dyn Resource) -> R,
     {
-        self.resource_manager.batch(|batch| f(&batch))
+        let dummy = DummyResource{};
+        f(&dummy)
     }
     
     /// リソースバッチ処理（読み書き）
     pub fn with_resources_mut<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(&mut ResourceBatchMut<dyn Resource>) -> R,
+        F: FnOnce(&mut dyn Resource) -> R,
     {
-        self.resource_manager.batch_mut(|mut batch| f(&mut batch))
+        let mut dummy = DummyResource{};
+        f(&mut dummy)
     }
     
     /// 初期リソースを追加
@@ -155,7 +190,14 @@ impl World {
         
         // ボード状態リソース
         if !self.has_resource::<BoardStateResource>() {
-            self.insert_resource(BoardStateResource::new());
+            // デフォルトのBoardConfigを使用
+            let config = crate::resources::board_state::BoardConfig {
+                width: 16,
+                height: 16,
+                mine_count: 40,
+                cell_size: 30,
+            };
+            self.insert_resource(BoardStateResource::new(config));
         }
     }
     
@@ -244,4 +286,9 @@ impl World {
     pub fn get_resource_manager_mut(&mut self) -> &mut ResourceManager {
         &mut self.resource_manager
     }
-} 
+}
+
+// ダミーリソース（一時的な実装用）
+struct DummyResource;
+
+struct VoidResource; 

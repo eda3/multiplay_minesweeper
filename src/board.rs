@@ -9,6 +9,7 @@ use crate::js_bindings::log;
 /**
  * マインスイーパーのボードを表す構造体
  */
+#[derive(Clone)]
 pub struct Board {
     /// ボードの幅
     pub width: usize,
@@ -297,5 +298,32 @@ impl Board {
                 }
             }
         }
+    }
+    
+    /**
+     * ボードの全セル値を取得する
+     * 
+     * @return セル値の配列
+     */
+    pub fn get_cell_values(&self) -> &Vec<CellValue> {
+        &self.cells
+    }
+    
+    /**
+     * 開かれたセルの情報を取得する
+     * 
+     * @return 開かれているかどうかの真偽値配列
+     */
+    pub fn get_revealed_cells(&self) -> &Vec<bool> {
+        &self.revealed
+    }
+    
+    /**
+     * フラグが立っているセルの情報を取得する
+     * 
+     * @return フラグが立っているかどうかの真偽値配列
+     */
+    pub fn get_flagged_cells(&self) -> &Vec<bool> {
+        &self.flagged
     }
 } 

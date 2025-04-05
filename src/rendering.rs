@@ -9,12 +9,82 @@ use crate::models::{CellValue, Player, Screen};
 use crate::components::Position;
 use crate::board::Board;
 use crate::js_bindings::log;
+use crate::models;
+
+/**
+ * 描画オプションを定義する構造体
+ */
+pub struct DrawOptions {
+    pub width: f64,
+    pub height: f64,
+    pub cell_size: f64,
+    pub scale: f64,
+}
+
+impl Default for DrawOptions {
+    fn default() -> Self {
+        Self {
+            width: 800.0,
+            height: 600.0,
+            cell_size: 30.0,
+            scale: 1.0,
+        }
+    }
+}
+
+/**
+ * 描画機能を提供するトレイト
+ */
+pub trait Renderer {
+    fn clear(&self) -> Result<(), JsValue>;
+    fn draw_board(&self, board: &Board, options: &DrawOptions) -> Result<(), JsValue>;
+    fn draw_ui(&self, options: &DrawOptions) -> Result<(), JsValue>;
+    fn draw_players(&self, players: &HashMap<String, Player>, options: &DrawOptions) -> Result<(), JsValue>;
+}
 
 /**
  * ゲームの描画を担当する構造体
  */
+#[derive(Clone)]
 pub struct GameRenderer {
     pub context: CanvasRenderingContext2d,
+}
+
+// Rendererトレイトの実装
+impl Renderer for GameRenderer {
+    fn clear(&self) -> Result<(), JsValue> {
+        // キャンバスをクリア
+        let canvas = self.context.canvas()
+            .ok_or_else(|| JsValue::from_str("キャンバスが見つかりません"))?;
+        self.context.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
+        Ok(())
+    }
+    
+    fn draw_board(&self, board: &Board, options: &DrawOptions) -> Result<(), JsValue> {
+        // ボードを描画
+        self.draw_board_internal(
+            &board.cells, 
+            &board.revealed, 
+            &board.flagged,
+            board.width,
+            board.height,
+            board.cell_size,
+            options.width,
+            options.height,
+        )
+    }
+    
+    fn draw_ui(&self, options: &DrawOptions) -> Result<(), JsValue> {
+        // UIを描画
+        self.draw_ui_internal(options.width)
+    }
+    
+    fn draw_players(&self, players: &HashMap<String, Player>, options: &DrawOptions) -> Result<(), JsValue> {
+        // プレイヤーを描画
+        let positions = &HashMap::new(); // 仮の空のHashMap
+        let local_player_id = &None; // 仮のNone
+        self.draw_players_internal(players, positions, local_player_id)
+    }
 }
 
 impl GameRenderer {
@@ -33,7 +103,7 @@ impl GameRenderer {
     /**
      * ボードを描画する
      */
-    pub fn draw_board(
+    pub fn draw_board_internal(
         &self, 
         cells: &[CellValue], 
         revealed: &[bool], 
@@ -157,38 +227,47 @@ impl GameRenderer {
     }
     
     /**
-     * プレイヤーのカーソルを描画する
+     * プレイヤーを描画する
      */
-    pub fn draw_players(
+    pub fn draw_players_internal(
         &self, 
-        players: &HashMap<String, Player>,
+        players: &HashMap<String, models::Player>,
+        positions: &HashMap<String, Position>,
         local_player_id: &Option<String>
     ) -> Result<(), JsValue> {
         let ctx = &self.context;
         
-        // 全プレイヤーを描画
         for (id, player) in players {
-            // カーソルを描画
-            ctx.set_fill_style(&JsValue::from_str(&player.color));
-            ctx.begin_path();
-            ctx.arc(
-                player.x,
-                player.y,
-                8.0,
-                0.0,
-                std::f64::consts::PI * 2.0,
-            )?;
-            ctx.fill();
-            
-            // プレイヤーIDを表示
-            ctx.set_font("12px Arial");
-            ctx.set_text_align("center");
-            ctx.set_text_baseline("top");
-            ctx.fill_text(
-                &id,
-                player.x,
-                player.y + 10.0,
-            )?;
+            // プレイヤーの位置情報を取得
+            if let Some(position) = positions.get(id) {
+                // プレイヤーのカーソルを描画
+                ctx.set_fill_style(&JsValue::from_str(
+                    if local_player_id.as_ref().map_or(false, |local_id| local_id == id) {
+                        "#00FF00" // ローカルプレイヤーは緑色
+                    } else {
+                        "#FF0000" // リモートプレイヤーは赤色
+                    }
+                ));
+                ctx.begin_path();
+                ctx.arc(
+                    position.x,
+                    position.y,
+                    8.0,
+                    0.0,
+                    std::f64::consts::PI * 2.0,
+                )?;
+                ctx.fill();
+                
+                // プレイヤーIDを表示
+                ctx.set_font("12px Arial");
+                ctx.set_text_align("center");
+                ctx.set_text_baseline("top");
+                ctx.fill_text(
+                    &id,
+                    position.x,
+                    position.y + 10.0,
+                )?;
+            }
         }
         
         Ok(())
@@ -197,7 +276,7 @@ impl GameRenderer {
     /**
      * UIを描画する
      */
-    pub fn draw_ui(&self, canvas_width: f64) -> Result<(), JsValue> {
+    pub fn draw_ui_internal(&self, canvas_width: f64) -> Result<(), JsValue> {
         let ctx = &self.context;
         
         // リセットボタン

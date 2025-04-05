@@ -1,196 +1,316 @@
 /**
- * コアゲームリソース
+ * ゲーム状態リソース
  * 
- * ゲームの進行状態、フェーズ、時間など基本的なゲーム状態を管理するリソース
+ * ゲームの現在の状態と進行状況を管理する
  */
-use wasm_bindgen::prelude::*;
-use js_sys::Date;
 use super::resource_trait::Resource;
+use std::{fmt::{self, Debug}, time::Duration, collections::HashMap};
 
-/// ゲームの状態を表す列挙型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// ゲームの段階
+#[derive(Debug, Clone, PartialEq)]
 pub enum GamePhase {
-    /// ゲーム開始前の準備状態
-    Ready,
+    /// スタート画面
+    StartScreen,
+    /// 準備中
+    Loading,
     /// ゲームプレイ中
     Playing,
     /// 一時停止中
     Paused,
-    /// ゲーム終了（勝敗あり）
+    /// ゲームオーバー（勝利または敗北）
     GameOver {
-        /// ゲームに勝利したかどうか
+        /// 勝利したかどうか
         win: bool,
+        /// スコア
+        score: u32,
+        /// 所要時間
+        time: Duration,
     },
 }
 
-/// ゲームの核となる状態を管理するリソース
+impl Default for GamePhase {
+    fn default() -> Self {
+        Self::StartScreen
+    }
+}
+
+/// 難易度レベル
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DifficultyLevel {
+    /// 初級
+    Beginner,
+    /// 中級
+    Intermediate,
+    /// 上級
+    Expert,
+    /// カスタム
+    Custom,
+}
+
+impl fmt::Display for DifficultyLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Beginner => write!(f, "初級"),
+            Self::Intermediate => write!(f, "中級"),
+            Self::Expert => write!(f, "上級"),
+            Self::Custom => write!(f, "カスタム"),
+        }
+    }
+}
+
+impl Default for DifficultyLevel {
+    fn default() -> Self {
+        Self::Intermediate
+    }
+}
+
+/// ゲームモード
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameMode {
+    /// シングルプレイヤー
+    SinglePlayer,
+    /// マルチプレイヤー
+    MultiPlayer,
+}
+
+impl Default for GameMode {
+    fn default() -> Self {
+        Self::SinglePlayer
+    }
+}
+
+/// ゲーム状態リソース
 #[derive(Debug, Clone)]
-pub struct CoreGameResource {
+pub struct GameStateResource {
     /// 現在のゲームフェーズ
     pub phase: GamePhase,
-    /// ゲーム開始時刻
-    pub start_time: Option<f64>,
-    /// 経過時間（ミリ秒）
-    pub elapsed_time: f64,
-    /// ゲームのスコア
+    /// 難易度レベル
+    pub difficulty: DifficultyLevel,
+    /// ゲームモード
+    pub mode: GameMode,
+    /// 現在のスコア
     pub score: u32,
-    /// 残りの地雷数
-    pub remaining_mines: u32,
-    pub is_multiplayer: bool,
+    /// ハイスコア
+    pub high_score: u32,
+    /// ゲーム開始時刻（ミリ秒）
+    pub start_time: f64,
+    /// ゲーム経過時間（ミリ秒）
+    pub elapsed_time: f64,
+    /// 一時停止開始時刻（ミリ秒）
+    pub pause_start_time: Option<f64>,
+    /// 累積一時停止時間（ミリ秒）
+    pub total_pause_time: f64,
+    /// デバッグモードかどうか
+    pub debug_mode: bool,
 }
 
-impl Default for CoreGameResource {
+impl Default for GameStateResource {
     fn default() -> Self {
-        Self::new()
+        Self {
+            phase: GamePhase::Loading,
+            difficulty: DifficultyLevel::default(),
+            mode: GameMode::default(),
+            score: 0,
+            high_score: 0,
+            start_time: 0.0,
+            elapsed_time: 0.0,
+            pause_start_time: None,
+            total_pause_time: 0.0,
+            debug_mode: false,
+        }
     }
 }
 
-impl CoreGameResource {
-    /// 新しいゲームリソースを作成
+impl GameStateResource {
+    /// 新しいゲーム状態リソースを作成
     pub fn new() -> Self {
-        Self {
-            phase: GamePhase::Ready,
-            start_time: None,
-            elapsed_time: 0.0,
-            score: 0,
-            remaining_mines: 0,
-            is_multiplayer: false,
-        }
+        Self::default()
     }
-
-    /// ゲームを初期化
-    pub fn initialize(&mut self, mine_count: u32) {
-        self.phase = GamePhase::Ready;
-        self.start_time = None;
-        self.elapsed_time = 0.0;
-        self.score = 0;
-        self.remaining_mines = mine_count;
-    }
-
-    /// 現在のゲームフェーズを取得
-    pub fn phase(&self) -> GamePhase {
-        self.phase
-    }
-
-    /// ゲームを開始
+    
+    /// ゲームをスタート
     pub fn start_game(&mut self) {
-        if self.phase == GamePhase::Ready {
-            self.phase = GamePhase::Playing;
-            self.start_time = Some(Date::now());
-        }
+        self.phase = GamePhase::Playing;
+        self.score = 0;
+        self.start_time = js_sys::Date::now();
+        self.elapsed_time = 0.0;
+        self.pause_start_time = None;
+        self.total_pause_time = 0.0;
     }
-
+    
     /// ゲームを一時停止
     pub fn pause_game(&mut self) {
         if self.phase == GamePhase::Playing {
             self.phase = GamePhase::Paused;
-            // 経過時間を記録
-            self.update_elapsed_time();
+            self.pause_start_time = Some(js_sys::Date::now());
         }
     }
-
+    
     /// ゲームを再開
     pub fn resume_game(&mut self) {
         if self.phase == GamePhase::Paused {
             self.phase = GamePhase::Playing;
-            // 開始時間を再設定（すでに経過した時間を考慮）
-            self.start_time = Some(Date::now() - self.elapsed_time);
+            if let Some(pause_time) = self.pause_start_time {
+                self.total_pause_time += js_sys::Date::now() - pause_time;
+                self.pause_start_time = None;
+            }
         }
     }
-
-    /// ゲームを終了
-    pub fn end_game(&mut self, win: bool) {
-        self.update_elapsed_time();
-        self.phase = GamePhase::GameOver { win };
+    
+    /// ゲームオーバーを設定
+    pub fn set_game_over(&mut self, win: bool) {
+        let time = if win {
+            self.update_elapsed_time();
+            Duration::from_millis(self.elapsed_time as u64)
+        } else {
+            Duration::from_millis(self.elapsed_time as u64)
+        };
+        
+        self.phase = GamePhase::GameOver { win, score: self.score, time };
+        
+        // ハイスコア更新
+        if win && self.score > self.high_score {
+            self.high_score = self.score;
+        }
     }
-
-    /// ゲームが実行中かどうか
-    pub fn is_playing(&self) -> bool {
-        matches!(self.phase, GamePhase::Playing)
-    }
-
-    /// ゲームが一時停止中かどうか
-    pub fn is_paused(&self) -> bool {
-        matches!(self.phase, GamePhase::Paused)
-    }
-
-    /// ゲームが終了したかどうか
-    pub fn is_game_over(&self) -> bool {
-        matches!(self.phase, GamePhase::GameOver { .. })
-    }
-
-    /// ゲームに勝利したかどうか
-    pub fn is_win(&self) -> bool {
-        matches!(self.phase, GamePhase::GameOver { win: true })
-    }
-
+    
     /// 経過時間を更新
     pub fn update_elapsed_time(&mut self) {
-        if let (Some(start), true) = (self.start_time, self.is_playing()) {
-            self.elapsed_time = Date::now() - start;
+        let now = js_sys::Date::now();
+        
+        // 一時停止中なら時間は進まない
+        if self.phase == GamePhase::Paused {
+            return;
+        }
+        
+        match self.phase {
+            GamePhase::Playing => {
+                self.elapsed_time = now - self.start_time - self.total_pause_time;
+            },
+            GamePhase::GameOver { .. } => {
+                // ゲームオーバー後は時間を更新しない
+            },
+            _ => {
+                // その他の状態では経過時間をリセット
+                self.elapsed_time = 0.0;
+            }
         }
     }
-
-    /// 経過時間を取得
-    pub fn elapsed_time(&self) -> f64 {
-        self.elapsed_time
-    }
-
-    /// スコアを取得
-    pub fn score(&self) -> u32 {
-        self.score
-    }
-
-    /// スコアを追加
+    
+    /// スコアを更新
     pub fn add_score(&mut self, points: u32) {
         self.score += points;
     }
-
-    /// 残りの地雷数を取得
-    pub fn remaining_mines(&self) -> u32 {
-        self.remaining_mines
+    
+    /// 難易度を設定
+    pub fn set_difficulty(&mut self, difficulty: DifficultyLevel) {
+        self.difficulty = difficulty;
     }
-
-    /// 残りの地雷数を設定
-    pub fn set_remaining_mines(&mut self, count: u32) {
-        self.remaining_mines = count;
+    
+    /// ゲームモードを設定
+    pub fn set_mode(&mut self, mode: GameMode) {
+        self.mode = mode;
     }
-
-    /// 旗を立てた時に残りの地雷数を減らす
-    pub fn decrement_mines(&mut self) {
-        if self.remaining_mines > 0 {
-            self.remaining_mines -= 1;
-        }
+    
+    /// デバッグモードの切り替え
+    pub fn toggle_debug_mode(&mut self) {
+        self.debug_mode = !self.debug_mode;
     }
-
-    /// 旗を外した時に残りの地雷数を増やす
-    pub fn increment_mines(&mut self) {
-        self.remaining_mines += 1;
+    
+    /// ゲームがプレイ中かどうか
+    pub fn is_playing(&self) -> bool {
+        self.phase == GamePhase::Playing
     }
-
-    /// 経過時間を文字列で取得（MM:SS形式）
-    pub fn format_elapsed_time(&self) -> String {
-        let total_seconds = (self.elapsed_time / 1000.0) as u32;
-        let minutes = total_seconds / 60;
-        let seconds = total_seconds % 60;
-        format!("{:02}:{:02}", minutes, seconds)
+    
+    /// ゲームが一時停止中かどうか
+    pub fn is_paused(&self) -> bool {
+        self.phase == GamePhase::Paused
     }
-
-    pub fn set_phase(&mut self, phase: GamePhase) {
-        self.phase = phase;
+    
+    /// ゲームがスタート画面かどうか
+    pub fn is_start_screen(&self) -> bool {
+        self.phase == GamePhase::StartScreen
     }
-
-    pub fn is_game_active(&self) -> bool {
-        matches!(self.phase, GamePhase::Playing)
+    
+    /// ゲームがロード中かどうか
+    pub fn is_loading(&self) -> bool {
+        self.phase == GamePhase::Loading
     }
-
+    
+    /// ゲームがゲームオーバーかどうか
     pub fn is_game_over(&self) -> bool {
         matches!(self.phase, GamePhase::GameOver { .. })
     }
+    
+    /// プレイヤーが勝利したかどうか
+    pub fn is_win(&self) -> bool {
+        matches!(self.phase, GamePhase::GameOver { win: true, .. })
+    }
+    
+    /// プレイヤーが敗北したかどうか
+    pub fn is_loss(&self) -> bool {
+        matches!(self.phase, GamePhase::GameOver { win: false, .. })
+    }
+    
+    /// ゲームの所要時間を取得
+    pub fn get_game_time(&self) -> Duration {
+        match self.phase {
+            GamePhase::GameOver { time, .. } => time,
+            _ => Duration::from_millis(self.elapsed_time as u64),
+        }
+    }
+    
+    /// ゲームのフェーズ名を取得
+    pub fn get_phase_name(&self) -> &'static str {
+        match self.phase {
+            GamePhase::StartScreen => "スタート画面",
+            GamePhase::Loading => "ロード中",
+            GamePhase::Playing => "プレイ中",
+            GamePhase::Paused => "一時停止",
+            GamePhase::GameOver { win: true, .. } => "勝利！",
+            GamePhase::GameOver { win: false, .. } => "ゲームオーバー",
+        }
+    }
+
+    /// カスタムボード設定
+    pub fn set_custom_board(&mut self, width: usize, height: usize, mines: usize) {
+        self.difficulty = DifficultyLevel::Custom;
+        // 必要ならBoardResourceも更新
+    }
+
+    /// セルサイズを更新
+    pub fn update_cell_size(&mut self, canvas_width: f64, canvas_height: f64) {
+        // キャンバスサイズに合わせてセルサイズを更新
+    }
 }
 
-// Resourceトレイトの実装
-impl Resource for CoreGameResource {}
+#[derive(Debug, Clone)]
+pub struct TimeResource {
+    pub delta_time: f64,
+    pub total_time: f64,
+}
+
+impl TimeResource {
+    pub fn new() -> Self {
+        Self {
+            delta_time: 0.0,
+            total_time: 0.0,
+        }
+    }
+
+    pub fn update(&mut self, delta_time: f64) {
+        self.delta_time = delta_time;
+        self.total_time += delta_time;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PlayerStateResource {
+    // ... existing code ...
+}
+
+impl PlayerStateResource {
+    // ... existing code ...
+}
 
 #[cfg(test)]
 mod tests {
@@ -198,51 +318,175 @@ mod tests {
 
     #[test]
     fn test_new_resource_has_default_values() {
-        let resource = CoreGameResource::new();
-        assert_eq!(resource.phase, GamePhase::Ready);
-        assert_eq!(resource.start_time, None);
-        assert_eq!(resource.elapsed_time, 0.0);
+        let resource = GameStateResource::new();
+        assert_eq!(resource.phase, GamePhase::StartScreen);
+        assert_eq!(resource.difficulty, DifficultyLevel::Intermediate);
+        assert_eq!(resource.mode, GameMode::SinglePlayer);
         assert_eq!(resource.score, 0);
-        assert_eq!(resource.remaining_mines, 0);
+        assert_eq!(resource.high_score, 0);
+        assert_eq!(resource.start_time, 0.0);
+        assert_eq!(resource.elapsed_time, 0.0);
+        assert_eq!(resource.pause_start_time, None);
+        assert_eq!(resource.total_pause_time, 0.0);
+        assert_eq!(resource.debug_mode, false);
     }
 
     #[test]
-    fn test_initialize_sets_correct_values() {
-        let mut resource = CoreGameResource::new();
-        resource.initialize(10);
-        assert_eq!(resource.phase, GamePhase::Ready);
-        assert_eq!(resource.start_time, None);
-        assert_eq!(resource.elapsed_time, 0.0);
+    fn test_start_game_sets_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        assert_eq!(resource.phase, GamePhase::Playing);
         assert_eq!(resource.score, 0);
-        assert_eq!(resource.remaining_mines, 10);
+        assert_eq!(resource.start_time, js_sys::Date::now());
+        assert_eq!(resource.elapsed_time, 0.0);
+        assert_eq!(resource.pause_start_time, None);
+        assert_eq!(resource.total_pause_time, 0.0);
     }
 
     #[test]
-    fn test_game_phase_transitions() {
-        let mut resource = CoreGameResource::new();
-        resource.initialize(10);
-        
-        // Ready -> Playing
+    fn test_pause_game_sets_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        resource.pause_game();
+        assert_eq!(resource.phase, GamePhase::Paused);
+        assert_eq!(resource.pause_start_time, Some(js_sys::Date::now()));
+    }
+
+    #[test]
+    fn test_resume_game_sets_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        resource.pause_game();
+        resource.resume_game();
+        assert_eq!(resource.phase, GamePhase::Playing);
+        assert_eq!(resource.pause_start_time, None);
+    }
+
+    #[test]
+    fn test_set_game_over_updates_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        resource.set_game_over(true);
+        assert_eq!(resource.phase, GamePhase::GameOver { win: true, score: 0, time: Duration::from_millis(0) });
+        assert_eq!(resource.high_score, 0);
+    }
+
+    #[test]
+    fn test_update_elapsed_time_updates_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        resource.update_elapsed_time();
+        assert_eq!(resource.elapsed_time, js_sys::Date::now() - resource.start_time);
+    }
+
+    #[test]
+    fn test_add_score_updates_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        resource.add_score(10);
+        assert_eq!(resource.score, 10);
+    }
+
+    #[test]
+    fn test_set_difficulty_updates_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.set_difficulty(DifficultyLevel::Expert);
+        assert_eq!(resource.difficulty, DifficultyLevel::Expert);
+    }
+
+    #[test]
+    fn test_set_mode_updates_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.set_mode(GameMode::MultiPlayer);
+        assert_eq!(resource.mode, GameMode::MultiPlayer);
+    }
+
+    #[test]
+    fn test_toggle_debug_mode_updates_correct_values() {
+        let mut resource = GameStateResource::new();
+        resource.toggle_debug_mode();
+        assert_eq!(resource.debug_mode, true);
+    }
+
+    #[test]
+    fn test_is_playing_returns_correct_value() {
+        let mut resource = GameStateResource::new();
         resource.start_game();
         assert!(resource.is_playing());
-        assert!(resource.start_time.is_some());
-        
-        // Playing -> Paused
+        resource.pause_game();
+        assert!(!resource.is_playing());
+    }
+
+    #[test]
+    fn test_is_paused_returns_correct_value() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        assert!(!resource.is_paused());
         resource.pause_game();
         assert!(resource.is_paused());
-        
-        // Paused -> Playing
-        resource.resume_game();
-        assert!(resource.is_playing());
-        
-        // Playing -> GameOver(win)
-        resource.end_game(true);
+    }
+
+    #[test]
+    fn test_is_start_screen_returns_correct_value() {
+        let mut resource = GameStateResource::new();
+        assert!(resource.is_start_screen());
+        resource.start_game();
+        assert!(!resource.is_start_screen());
+    }
+
+    #[test]
+    fn test_is_loading_returns_correct_value() {
+        let mut resource = GameStateResource::new();
+        assert!(resource.is_loading());
+        resource.start_game();
+        assert!(!resource.is_loading());
+    }
+
+    #[test]
+    fn test_is_game_over_returns_correct_value() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        assert!(!resource.is_game_over());
+        resource.set_game_over(true);
         assert!(resource.is_game_over());
+    }
+
+    #[test]
+    fn test_is_win_returns_correct_value() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        assert!(!resource.is_win());
+        resource.set_game_over(true);
         assert!(resource.is_win());
-        
-        // GameOver -> Ready (新しいゲーム)
-        resource.initialize(15);
-        assert_eq!(resource.phase, GamePhase::Ready);
-        assert_eq!(resource.remaining_mines, 15);
+    }
+
+    #[test]
+    fn test_is_loss_returns_correct_value() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        assert!(!resource.is_loss());
+        resource.set_game_over(false);
+        assert!(resource.is_loss());
+    }
+
+    #[test]
+    fn test_get_game_time_returns_correct_value() {
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        assert_eq!(resource.get_game_time(), Duration::from_millis(0));
+        resource.update_elapsed_time();
+        assert_eq!(resource.get_game_time(), Duration::from_millis(resource.elapsed_time as u64));
+    }
+
+    #[test]
+    fn test_get_phase_name_returns_correct_value() {
+        let resource = GameStateResource::new();
+        assert_eq!(resource.get_phase_name(), "スタート画面");
+        let mut resource = GameStateResource::new();
+        resource.start_game();
+        assert_eq!(resource.get_phase_name(), "プレイ中");
+        let mut resource = GameStateResource::new();
+        resource.set_game_over(true);
+        assert_eq!(resource.get_phase_name(), "勝利！");
     }
 } 

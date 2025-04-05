@@ -23,8 +23,6 @@ pub struct BoardConfigResource {
     pub safe_first_click: bool,
 }
 
-impl Resource for BoardConfigResource {}
-
 impl Default for BoardConfigResource {
     fn default() -> Self {
         Self {
@@ -76,8 +74,6 @@ pub struct BoardStateResource {
     // フラグを立てたセルの数
     pub flagged_count: usize,
 }
-
-impl Resource for BoardStateResource {}
 
 impl Default for BoardStateResource {
     fn default() -> Self {

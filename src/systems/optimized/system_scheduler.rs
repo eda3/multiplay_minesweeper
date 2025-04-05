@@ -1,14 +1,95 @@
 /**
  * システムスケジューラ
  * 
- * システムの実行タイミングと頻度を制御
+ * システムの実行スケジュールを管理する
  */
 use wasm_bindgen::JsValue;
 use js_sys::Date;
 use web_sys::console;
-
-use crate::entities::EntityManager;
+use std::any::TypeId;
+use wasm_bindgen::prelude::*;
+use std::fmt::{self, Debug};
 use super::system_registry::SystemRegistry;
+use crate::entities::EntityManager;
+use crate::entities::entity::EntityId;
+use super::resource_dependency::ResourceDependency;
+use crate::resources::resource_manager::ResourceManager;
+
+/// デルタ時間の型エイリアス（秒単位）
+pub type DeltaTime = f32;
+
+#[macro_export]
+macro_rules! console_error {
+    ($($arg:tt)*) => {
+        web_sys::console::error_1(&format!($($arg)*).into());
+    }
+}
+
+/// クロージャをSystemトレイトとして実装するためのラッパー
+pub struct SystemFn<F> 
+where 
+    F: FnMut(&mut ResourceManager, DeltaTime) -> Result<(), JsValue> + Send + Sync + 'static
+{
+    /// 実行する関数
+    func: F,
+    /// システム名
+    name: String,
+    /// アクティブ状態
+    active: bool,
+}
+
+impl<F> SystemFn<F> 
+where 
+    F: FnMut(&mut ResourceManager, DeltaTime) -> Result<(), JsValue> + Send + Sync + 'static
+{
+    /// 新しい関数システムを作成
+    pub fn new(name: impl Into<String>, func: F) -> Self {
+        Self {
+            func,
+            name: name.into(),
+            active: true,
+        }
+    }
+}
+
+impl<F> Debug for SystemFn<F> 
+where 
+    F: FnMut(&mut ResourceManager, DeltaTime) -> Result<(), JsValue> + Send + Sync + 'static
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SystemFn")
+            .field("name", &self.name)
+            .field("active", &self.active)
+            .finish()
+    }
+}
+
+impl<F> super::system_trait::System for SystemFn<F> 
+where 
+    F: FnMut(&mut ResourceManager, DeltaTime) -> Result<(), JsValue> + Send + Sync + 'static
+{
+    fn name(&self) -> &str {
+        &self.name
+    }
+    
+    fn update(&mut self, _entity_manager: &mut EntityManager, delta_time: f32) {
+        // 別のアプローチ: ここでは一時的にダミーリソースマネージャーを作成
+        let mut dummy_resource_manager = ResourceManager::new();
+        
+        // ダミーリソースマネージャーを使ってシステム関数を呼び出す
+        if let Err(e) = (self.func)(&mut dummy_resource_manager, delta_time) {
+            console_error!("System error in {}: {:?}", self.name, e);
+        }
+    }
+    
+    fn is_active(&self) -> bool {
+        self.active
+    }
+    
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+    }
+}
 
 /// システムスケジューラ
 /// 固定レート更新と可変レート更新のサポート

@@ -16,6 +16,7 @@ use web_sys::HtmlCanvasElement;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::thread::LocalKey;
+use std::borrow::BorrowMut;
 
 // サブモジュールを登録
 mod js_bindings;
@@ -70,12 +71,14 @@ pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
     let game_state = Rc::new(RefCell::new(GameState::new(canvas_element.clone())?));
     
     // マウスイベントのセットアップ
-    let game_state_clone = game_state.clone();
     let mouse_move_closure = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
-        let mut game = game_state_clone.borrow_mut();
-        let rect = game.canvas.get_bounding_client_rect();
-        game.mouse_x = event.client_x() as f64 - rect.left();
-        game.mouse_y = event.client_y() as f64 - rect.top();
+        GAME_STATE.with(|gs| {
+            if let Some(ref mut game) = *gs.borrow_mut() {
+                let rect = game.canvas.get_bounding_client_rect();
+                game.mouse_x = event.client_x() as f64 - rect.left();
+                game.mouse_y = event.client_y() as f64 - rect.top();
+            }
+        });
     }) as Box<dyn FnMut(web_sys::MouseEvent)>);
     
     canvas_element.add_event_listener_with_callback(
@@ -85,20 +88,23 @@ pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
     mouse_move_closure.forget();
     
     // マウスクリックイベントのセットアップ
-    let game_state_clone = game_state.clone();
     let mouse_click_closure = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
         event.prevent_default();
-        let mut game = game_state_clone.borrow_mut();
-        let rect = game.canvas.get_bounding_client_rect();
-        let x = event.client_x() as f64 - rect.left();
-        let y = event.client_y() as f64 - rect.top();
         
-        // 右クリックかどうか
-        let right_click = event.button() == 2;
-        
-        if let Err(e) = game.handle_mouse_click(x, y, right_click) {
-            log(&format!("Mouse click error: {:?}", e));
-        }
+        GAME_STATE.with(|gs| {
+            if let Some(ref mut game) = *gs.borrow_mut() {
+                let rect = game.canvas.get_bounding_client_rect();
+                let x = event.client_x() as f64 - rect.left();
+                let y = event.client_y() as f64 - rect.top();
+                
+                // 右クリックかどうか
+                let right_click = event.button() == 2;
+                
+                if let Err(e) = game.handle_mouse_click(x, y, right_click) {
+                    log(&format!("Mouse click error: {:?}", e));
+                }
+            }
+        });
     }) as Box<dyn FnMut(web_sys::MouseEvent)>);
     
     canvas_element.add_event_listener_with_callback(
@@ -122,13 +128,16 @@ pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
     let f = Rc::new(RefCell::new(None));
     let g = f.clone();
     
-    let game_state_clone = game_state.clone();
-    *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+    *g.as_ref().borrow_mut() = Some(Closure::wrap(Box::new(move || {
         // ゲームの更新
-        if let Err(e) = game_state_clone.borrow_mut().update() {
-            log(&format!("Game update error: {:?}", e));
-            return;
-        }
+        GAME_STATE.with(|gs| {
+            if let Some(ref mut game) = *gs.borrow_mut() {
+                if let Err(e) = game.update() {
+                    log(&format!("Game update error: {:?}", e));
+                    return;
+                }
+            }
+        });
         
         // 次のフレームをリクエスト
         request_animation_frame(f.borrow().as_ref().unwrap());
@@ -153,21 +162,9 @@ pub fn init_game(canvas_id: &str) -> Result<(), JsValue> {
     // パニックハンドラを設定
     console_error_panic_hook::set_once();
     
-    let window = web_sys::window().unwrap();
-    let document = window.document().unwrap();
-    let canvas = document.get_element_by_id(canvas_id).unwrap();
-    let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into::<web_sys::HtmlCanvasElement>()?;
-    
-    // 互換GameStateクラスのインスタンスを作成
-    let game_state = compat_game_state::CompatGameState::new(canvas)?;
-    
-    // グローバル変数に保存
-    GAME_STATE.with(|gs| {
-        *gs.borrow_mut() = Some(game_state);
-    });
-    
-    // イベントリスナーとアニメーションフレームの設定
-    setup_event_listeners(canvas_id)?;
+    // TODO: ECSベースのゲーム初期化を実装
+    // 一時的な空実装
+    log("ECS based game initialization is not implemented yet.");
     
     Ok(())
 }
@@ -185,20 +182,22 @@ fn setup_event_listeners(canvas_id: &str) -> Result<(), JsValue> {
     let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into::<web_sys::HtmlCanvasElement>()?;
     
     // マウス移動イベント
+    let canvas_for_move = canvas.clone();
     let mouse_move_closure = Closure::wrap(Box::new(move |event: web_sys::MouseEvent| {
+        let rect = canvas_for_move.get_bounding_client_rect();
+        
         GAME_STATE.with(|gs| {
             if let Some(ref mut game) = *gs.borrow_mut() {
-                let rect = game.canvas.get_bounding_client_rect();
-                let x = event.client_x() as f64 - rect.left();
-                let y = event.client_y() as f64 - rect.top();
-                
-                // マウス座標を更新
-                game.set_mouse_position(x, y);
+                // マウス座標更新
+                game.mouse_x = event.client_x() as f64 - rect.left();
+                game.mouse_y = event.client_y() as f64 - rect.top();
             }
         });
     }) as Box<dyn FnMut(web_sys::MouseEvent)>);
     
-    canvas.add_event_listener_with_callback(
+    // 別のキャンバス参照を作成
+    let canvas_for_event = canvas.clone();
+    canvas_for_event.add_event_listener_with_callback(
         "mousemove",
         mouse_move_closure.as_ref().unchecked_ref(),
     )?;
@@ -277,7 +276,7 @@ fn setup_event_listeners(canvas_id: &str) -> Result<(), JsValue> {
     let f = Rc::new(RefCell::new(None));
     let g = f.clone();
     
-    *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+    *g.as_ref().borrow_mut() = Some(Closure::wrap(Box::new(move || {
         // ゲームの更新
         GAME_STATE.with(|gs| {
             if let Some(ref mut game) = *gs.borrow_mut() {

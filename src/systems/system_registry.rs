@@ -8,7 +8,8 @@ use wasm_bindgen::JsValue;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::entities::EntityManager;
-use crate::resources::GameState;
+use crate::resources::GameStateResource;
+use std::any::Any;
 
 /// デルタタイム（前回のフレームからの経過時間）
 #[derive(Debug, Clone, Copy)]
@@ -126,13 +127,14 @@ impl SystemRegistry {
     }
     
     /// リソースを取得
-    pub fn get_resource<T: 'static>(&self, name: &'static str) -> Option<Rc<RefCell<T>>> {
+    pub fn get_resource<T: 'static + Clone>(&self, name: &'static str) -> Option<Rc<RefCell<T>>> {
         self.resources.get(name).map(|rc_any| {
             let any_ref = rc_any.clone();
             let any_refcell = any_ref.as_ref();
             
             // ダウンキャスト
-            Rc::new(RefCell::new(any_refcell.borrow().downcast_ref::<T>().unwrap().clone()))
+            let resource = any_refcell.borrow().downcast_ref::<T>().unwrap().clone();
+            Rc::new(RefCell::new(resource))
         })
     }
     
@@ -169,4 +171,26 @@ impl SystemRegistry {
         
         Ok(())
     }
+}
+
+/// リソースコンテナからリソースを読み込むヘルパー関数
+pub fn load_resource<T: 'static>(resources: &HashMap<&'static str, Rc<RefCell<dyn Any>>>, key: &'static str) -> Option<T>
+where
+    T: Clone,
+{
+    resources.get(key).and_then(|rc_any| {
+        let mut_ref = rc_any.borrow();
+        mut_ref.downcast_ref::<T>().map(|res| res.clone())
+    })
+}
+
+/// リソースコンテナからリソースを可変で読み込むヘルパー関数
+pub fn load_resource_mut<T: 'static>(resources: &HashMap<&'static str, Rc<RefCell<dyn Any>>>, key: &'static str) -> Option<T>
+where
+    T: Clone,
+{
+    resources.get(key).and_then(|rc_any| {
+        let mut mut_ref = rc_any.borrow_mut();
+        mut_ref.downcast_mut::<T>().map(|res| res.clone())
+    })
 } 

@@ -1,121 +1,140 @@
 /**
  * 入力システム
  * 
- * ユーザー入力の処理を担当するシステム
+ * マウスとキーボードの入力を処理する
  */
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use wasm_bindgen::JsValue;
-use web_sys::{MouseEvent, KeyboardEvent};
+use std::any::Any;
 
-use crate::entities::EntityManager;
-use crate::systems::system_registry::DeltaTime;
-use crate::components::{Position, MouseState};
-use crate::resources::{InputResource, BoardResource};
+use crate::resources::InputResource;
+use crate::resources::BoardResource;
+use crate::resources::{GameStateResource, GamePhase, DifficultyLevel};
 
-/// 入力システム - マウスとキーボードの入力を処理
-pub fn input_system(
-    entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    _delta_time: DeltaTime,
-) -> Result<(), JsValue> {
-    // InputResourceを取得
-    let input_resource = resources.get("input").and_then(|res| {
-        res.clone().borrow_mut().downcast_mut::<InputResource>().map(|r| r.clone())
-    });
+/// 入力システム関数
+pub fn input_system(resources: &[Rc<RefCell<dyn Any>>]) {
+    // InputResourceを探す
+    let input_rc_option = resources.iter()
+        .find(|r| r.borrow().is::<InputResource>());
     
-    if let Some(input) = input_resource {
-        // マウス状態の処理
-        if let Some(mouse_event) = input.last_mouse_event.clone() {
-            handle_mouse_event(entity_manager, resources, mouse_event)?;
+    if let Some(input_rc) = input_rc_option {
+        let input = input_rc.borrow();
+        let input = input.downcast_ref::<InputResource>().unwrap();
+        
+        // BoardResourceのRcを探す
+        let board_rc_option = resources.iter()
+            .find(|r| r.borrow().is::<BoardResource>());
+        
+        // GameStateResourceのRcを探す
+        let game_rc_option = resources.iter()
+            .find(|r| r.borrow().is::<GameStateResource>());
+        
+        // 必要なリソースが見つからない場合は何もしない
+        if board_rc_option.is_none() || game_rc_option.is_none() {
+            return;
         }
         
-        // キーボード状態の処理
-        if let Some(key_event) = input.last_key_event.clone() {
-            handle_keyboard_event(entity_manager, resources, key_event)?;
-        }
-    }
-    
-    Ok(())
-}
-
-/// マウスイベントの処理
-fn handle_mouse_event(
-    entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    event: MouseEvent,
-) -> Result<(), JsValue> {
-    // マウス座標を取得
-    let x = event.offset_x() as f64;
-    let y = event.offset_y() as f64;
-    
-    // マウス状態エンティティを見つける
-    let mouse_entities = entity_manager.find_entities_with_component::<MouseState>();
-    if let Some(mouse_entity) = mouse_entities.first() {
-        // 座標コンポーネントを更新
-        if let Some(mut position) = entity_manager.get_component_mut::<Position>(*mouse_entity) {
-            position.x = x;
-            position.y = y;
-        }
+        let board_rc = board_rc_option.unwrap();
+        let game_rc = game_rc_option.unwrap();
         
-        // マウス状態コンポーネントを更新
-        if let Some(mut mouse_state) = entity_manager.get_component_mut::<MouseState>(*mouse_entity) {
-            match event.type_().as_str() {
-                "mousedown" => {
-                    mouse_state.is_pressed = true;
-                    mouse_state.button = event.button();
-                    
-                    // ボードリソースの取得とセル処理
-                    if let Some(board_rc) = resources.get("board") {
-                        if let Some(mut board) = board_rc.borrow_mut().downcast_mut::<BoardResource>() {
-                            let cell_x = (x / board.cell_size) as usize;
-                            let cell_y = (y / board.cell_size) as usize;
-                            
-                            // 左クリックでセルを開く、右クリックでフラグを立てる
-                            if event.button() == 0 {  // 左ボタン
-                                // セルを開く
-                                board.reveal_cell(cell_x, cell_y);
-                            } else if event.button() == 2 {  // 右ボタン
-                                // フラグを立てる/下げる
-                                board.toggle_flag(cell_x, cell_y);
-                            }
-                        }
-                    }
-                },
-                "mouseup" => {
-                    mouse_state.is_pressed = false;
-                },
-                "mousemove" => {
-                    // 移動中に特別な処理が必要なら追加
-                },
+        // 借用して処理
+        {
+            let mut board = board_rc.borrow_mut();
+            let board = board.downcast_mut::<BoardResource>().unwrap();
+            
+            let mut game = game_rc.borrow_mut();
+            let game = game.downcast_mut::<GameStateResource>().unwrap();
+            
+            // ゲームフェーズに応じた入力処理
+            match game.phase {
+                GamePhase::StartScreen => process_start_screen_input(input, game),
+                GamePhase::Playing => process_playing_input(input, board, game),
+                GamePhase::Paused => process_paused_input(input, game),
+                GamePhase::GameOver { .. } => process_game_over_input(input, game, board),
                 _ => {}
             }
         }
     }
-    
-    Ok(())
 }
 
-/// キーボードイベントの処理
-fn handle_keyboard_event(
-    _entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    event: KeyboardEvent,
-) -> Result<(), JsValue> {
-    // キー入力に基づいた処理を実装
-    match event.key().as_str() {
-        "r" => {
-            // Rキーでゲームリセット
-            if let Some(board_rc) = resources.get("board") {
-                if let Some(mut board) = board_rc.borrow_mut().downcast_mut::<BoardResource>() {
-                    board.initialize();
-                }
-            }
-        },
-        // 他のキー入力処理を追加
-        _ => {}
+/// スタート画面での入力処理
+fn process_start_screen_input(input: &InputResource, game: &mut GameStateResource) {
+    // スペースキーでゲーム開始
+    if input.is_key_pressed("Space") {
+        game.start_game();
     }
     
-    Ok(())
+    // 難易度選択
+    if input.is_key_pressed("Digit1") {
+        game.set_difficulty(DifficultyLevel::Beginner);
+    } else if input.is_key_pressed("Digit2") {
+        game.set_difficulty(DifficultyLevel::Intermediate);
+    } else if input.is_key_pressed("Digit3") {
+        game.set_difficulty(DifficultyLevel::Expert);
+    }
+}
+
+/// ゲームプレイ中の入力処理
+fn process_playing_input(input: &InputResource, board: &mut BoardResource, game: &mut GameStateResource) {
+    // ESCキーでゲーム一時停止
+    if input.is_key_pressed("Escape") {
+        game.pause_game();
+        return;
+    }
+    
+    // マウス入力処理
+    if input.is_mouse_pressed(0) { // 左クリック
+        let (mouse_x, mouse_y) = input.get_mouse_position();
+        if let Some(cell_index) = board.get_cell_index(mouse_x, mouse_y) {
+            // セルを開く
+            let exploded = board.reveal_cell(cell_index);
+            
+            // 爆発した場合はゲームオーバー
+            if exploded {
+                board.reveal_all_mines();
+                game.set_game_over(false);
+                return;
+            }
+            
+            // 勝利条件チェック
+            if board.check_win_condition() {
+                board.reveal_all_mines();
+                game.add_score((board.config.width * board.config.height) as u32);
+                game.set_game_over(true);
+            }
+        }
+    } else if input.is_mouse_pressed(2) { // 右クリック
+        let (mouse_x, mouse_y) = input.get_mouse_position();
+        if let Some(cell_index) = board.get_cell_index(mouse_x, mouse_y) {
+            // フラグを切り替える
+            board.toggle_flag(cell_index);
+        }
+    }
+}
+
+/// 一時停止中の入力処理
+fn process_paused_input(input: &InputResource, game: &mut GameStateResource) {
+    // ESCキーまたはスペースキーでゲーム再開
+    if input.is_key_pressed("Escape") || input.is_key_pressed("Space") {
+        game.resume_game();
+    }
+    
+    // Rキーでゲームをリセット
+    if input.is_key_pressed("KeyR") {
+        game.start_game();
+    }
+}
+
+/// ゲームオーバー時の入力処理
+fn process_game_over_input(input: &InputResource, game: &mut GameStateResource, board: &mut BoardResource) {
+    // スペースキーまたはRキーで新しいゲーム
+    if input.is_key_pressed("Space") || input.is_key_pressed("KeyR") {
+        game.start_game();
+        board.reset();
+    }
+    
+    // ESCキーでスタート画面に戻る
+    if input.is_key_pressed("Escape") {
+        game.phase = GamePhase::StartScreen;
+    }
 } 

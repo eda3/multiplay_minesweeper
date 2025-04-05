@@ -8,11 +8,14 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
+use js_sys::{Math, Object, Reflect, Date};
 
 use crate::js_bindings::{log, update_connection_status, update_player_count, update_game_status};
 use crate::models::{CellValue, Screen, Player};
 use crate::utils::get_cell_index_from_coordinates;
-use crate::rendering::GameRenderer;
+use crate::rendering::{Renderer, DrawOptions, GameRenderer};
 use crate::network::{NetworkManager, MessageCallback};
 use crate::board::Board;
 
@@ -20,13 +23,14 @@ use crate::board::Board;
 use crate::ecs_game::EcsGame;
 use crate::resources::{
     CoreGameResource, GamePhase, TimeResource, 
-    PlayerStateResource, GameConfigResource, MouseState
+    PlayerStateResource, GameStateResource, MouseState
 };
 
 /**
  * ゲーム全体の状態を管理する互換構造体
  * 既存のGameStateと同じインターフェースを持ち、内部ではECSを使用する
  */
+#[derive(Clone)]
 pub struct CompatGameState {
     // ECSゲームエンジン
     pub ecs_game: EcsGame,
@@ -41,13 +45,28 @@ pub struct CompatGameState {
     
     // 現在の状態（ECSに移行中なので一時的に保持）
     pub current_screen: Screen,
-    pub board: Board,
+    pub board: Option<Board>,
     
     // マウス座標（一時的に保持）
     pub mouse_x: f64,
     pub mouse_y: f64,
     pub mouse_down: bool,
     pub last_position_update: f64,
+    
+    // プレイヤー情報（互換性のため）
+    pub players: HashMap<String, Player>,
+    
+    // ローカルプレイヤーID
+    pub local_player_id: Option<String>,
+}
+
+/// 位置情報（互換性のため）
+#[derive(Debug, Clone)]
+pub struct Position {
+    /// X座標
+    pub x: f64,
+    /// Y座標
+    pub y: f64,
 }
 
 impl CompatGameState {
@@ -79,14 +98,14 @@ impl CompatGameState {
         let network = NetworkManager::new();
         
         // ボードの作成
-        let board = Board::new(board_width, board_height, mine_count, cell_size);
+        let board = Some(Board::new(board_width, board_height, mine_count, cell_size));
         
         // ECSゲームエンジンの作成
         let mut ecs_game = EcsGame::new();
         ecs_game.initialize();
         
         // ゲームコンフィグの設定
-        if let Some(game_config) = ecs_game.get_resource_mut::<GameConfigResource>() {
+        if let Some(game_config) = ecs_game.get_resource_mut::<GameStateResource>() {
             game_config.set_custom_board(board_width, board_height, mine_count);
             game_config.update_cell_size(canvas.width() as f64, canvas.height() as f64);
         }
@@ -103,6 +122,8 @@ impl CompatGameState {
             mouse_y: 0.0,
             mouse_down: false,
             last_position_update: 0.0,
+            players: HashMap::new(),
+            local_player_id: None,
         })
     }
     
@@ -196,15 +217,15 @@ impl CompatGameState {
                                 for cell in cells {
                                     if let Some(index) = cell.as_i64() {
                                         let index = index as usize;
-                                        game_state.board.revealed[index] = true;
+                                        game_state.board.as_mut().unwrap().revealed[index] = true;
                                         
                                         // セルの値を設定
                                         if let Some(value) = values.get(&index.to_string()) {
                                             if let Some(v) = value.as_i64() {
                                                 if v == -1 {
-                                                    game_state.board.cells[index] = CellValue::Mine;
+                                                    game_state.board.as_mut().unwrap().cells[index] = CellValue::Mine;
                                                 } else {
-                                                    game_state.board.cells[index] = CellValue::Empty(v as u8);
+                                                    game_state.board.as_mut().unwrap().cells[index] = CellValue::Empty(v as u8);
                                                 }
                                             }
                                         }
@@ -213,7 +234,7 @@ impl CompatGameState {
                                 
                                 // ゲームオーバーかどうか
                                 if let Some(game_over) = json["gameOver"].as_bool() {
-                                    game_state.board.game_over = game_over;
+                                    game_state.board.as_mut().unwrap().game_over = game_over;
                                     
                                     // CoreGameResourceも更新
                                     if game_over {
@@ -225,7 +246,10 @@ impl CompatGameState {
                                 
                                 // 勝利かどうか
                                 if let Some(win) = json["win"].as_bool() {
-                                    game_state.board.win = win;
+                                    game_state.board.as_mut().unwrap().win = win;
+                                    
+                                    // CoreGameResourceも更新
+                                    game_state.ecs_game.end_game(win);
                                 }
                                 
                                 // ゲーム状態を更新
@@ -237,11 +261,11 @@ impl CompatGameState {
                     },
                     "game_over" => {
                         // ゲームオーバー
-                        game_state.board.game_over = true;
+                        game_state.board.as_mut().unwrap().game_over = true;
                         
                         // 勝利かどうか
                         if let Some(win) = json["win"].as_bool() {
-                            game_state.board.win = win;
+                            game_state.board.as_mut().unwrap().win = win;
                             
                             // CoreGameResourceも更新
                             game_state.ecs_game.end_game(win);
@@ -254,15 +278,15 @@ impl CompatGameState {
                             // 全てのセルの値を設定
                             for (index_str, value) in all_cell_values {
                                 if let Ok(index) = index_str.parse::<usize>() {
-                                    if index < game_state.board.cells.len() {
+                                    if index < game_state.board.as_ref().unwrap().cells.len() {
                                         if let Some(v) = value.as_i64() {
                                             if v == -1 {
-                                                game_state.board.cells[index] = CellValue::Mine;
+                                                game_state.board.as_mut().unwrap().cells[index] = CellValue::Mine;
                                             } else {
-                                                game_state.board.cells[index] = CellValue::Empty(v as u8);
+                                                game_state.board.as_mut().unwrap().cells[index] = CellValue::Empty(v as u8);
                                             }
                                             // セルを表示状態に
-                                            game_state.board.revealed[index] = true;
+                                            game_state.board.as_mut().unwrap().revealed[index] = true;
                                         }
                                     }
                                 }
@@ -403,10 +427,10 @@ impl CompatGameState {
                 let cell_size = ((self.canvas.width() as f64).min(self.canvas.height() as f64) - 40.0) / width as f64;
                 
                 // ボードを再作成
-                self.board = Board::new(width as usize, height as usize, mine_count as usize, cell_size);
+                self.board = Some(Board::new(width as usize, height as usize, mine_count as usize, cell_size));
                 
                 // GameConfigResourceを更新
-                if let Some(game_config) = self.ecs_game.get_resource_mut::<GameConfigResource>() {
+                if let Some(game_config) = self.ecs_game.get_resource_mut::<GameStateResource>() {
                     game_config.set_custom_board(width as usize, height as usize, mine_count as usize);
                     game_config.update_cell_size(self.canvas.width() as f64, self.canvas.height() as f64);
                 }
@@ -434,16 +458,16 @@ impl CompatGameState {
      * ゲームステータスを更新
      */
     pub fn update_game_status(&self) {
-        // ゲームステータスの表示を更新
-        let status = if self.board.game_over {
-            if self.board.win {
-                "ゲーム勝利！👍"
+        let status = if self.board.as_ref().unwrap().game_over {
+            if self.board.as_ref().unwrap().win {
+                "勝利！"
             } else {
-                "ゲームオーバー 💣"
+                "ゲームオーバー！"
             }
+        } else if self.board.as_ref().unwrap().game_started {
+            "ゲーム中..."
         } else {
-            let remaining = self.board.mine_count - self.board.flagged.iter().filter(|&f| *f).count();
-            &format!("🚩 残り: {}", remaining)
+            "ゲーム開始待ち..."
         };
         
         update_game_status(status);
@@ -459,9 +483,9 @@ impl CompatGameState {
     pub fn get_cell_index(&self, x: f64, y: f64) -> Option<usize> {
         get_cell_index_from_coordinates(
             x, y,
-            self.board.cell_size,
-            self.board.width, 
-            self.board.height
+            self.board.as_ref()?.cell_size,
+            self.board.as_ref()?.width, 
+            self.board.as_ref()?.height
         )
     }
 
@@ -502,41 +526,40 @@ impl CompatGameState {
      * @return 成功した場合はOk(()), エラーの場合はErr(JsValue)
      */
     pub fn draw(&mut self) -> Result<(), JsValue> {
-        // 画面によって異なる描画処理
+        // クリア
+        self.renderer.clear()?;
+        
+        // 描画オプションを作成
+        let canvas_width = self.canvas.width() as f64;
+        let canvas_height = self.canvas.height() as f64;
+        let draw_options = DrawOptions {
+            width: canvas_width,
+            height: canvas_height,
+            cell_size: 30.0, // デフォルト値
+            scale: 1.0,
+        };
+        
+        // 現在の画面を描画
         match self.current_screen {
             Screen::Title => {
-                // タイトル画面
                 self.renderer.draw_title_screen(
                     self.canvas.width() as f64,
                     self.canvas.height() as f64,
-                    false // 接続状態は後で取得する
+                    self.network.is_connected
                 )?;
             },
             Screen::Game => {
-                // ゲーム画面
-                
-                // ボードの描画
-                self.renderer.draw_board(
-                    &self.board.cells, 
-                    &self.board.revealed, 
-                    &self.board.flagged,
-                    self.board.width,
-                    self.board.height,
-                    self.board.cell_size,
-                    self.canvas.width() as f64,
-                    self.canvas.height() as f64
-                )?;
-                
-                // プレイヤーカーソルの描画
-                // PlayerStateResourceからプレイヤー情報を取得
-                if let Some(player_state) = self.ecs_game.get_resource::<PlayerStateResource>() {
-                    // プレイヤーマップを取得できると仮定
-                    let mut players_map = HashMap::new();
-                    let local_player_id = player_state.local_player().map(|p| p.id.clone());
+                if let Some(board) = &self.board {
+                    // 描画オプションを更新
+                    let draw_options = DrawOptions {
+                        width: canvas_width,
+                        height: canvas_height,
+                        cell_size: board.cell_size,
+                        scale: 1.0,
+                    };
                     
-                    // 簡易的な描画（本来はPlayerStateResourceからデータを取得するべき）
-                    // 現状は互換レイヤーなので簡易実装
-                    self.renderer.draw_players(&players_map, &local_player_id)?;
+                    // ボードを描画
+                    self.renderer.draw_board(board, &draw_options)?;
                 }
             }
         }
@@ -566,7 +589,7 @@ impl CompatGameState {
                 // ゲーム画面の場合、ボードのセルをクリック
                 
                 // ゲームオーバー時は何もしない
-                if self.board.game_over {
+                if self.board.as_ref().map_or(true, |b| b.game_over) {
                     return Ok(());
                 }
                 
@@ -596,13 +619,13 @@ impl CompatGameState {
         let now = js_sys::Date::now();
         
         // タイトル画面やゲームオーバー時は送信しない
-        if self.current_screen != Screen::Game || self.board.game_over {
+        if self.current_screen != Screen::Game || self.board.as_ref().map_or(true, |b| b.game_over) {
             return Ok(());
         }
         
         // TimeResourceから時間情報を取得
         let current_time = if let Some(time) = self.ecs_game.get_resource::<TimeResource>() {
-            time.total_time
+            time.total_time()
         } else {
             now
         };
@@ -630,7 +653,7 @@ impl CompatGameState {
      */
     pub fn reveal_cell(&mut self, index: usize) -> Result<(), JsValue> {
         // 既に開いているセルや旗が立っているセルは開けない
-        if self.board.revealed[index] || self.board.flagged[index] {
+        if self.board.as_ref().map_or(true, |b| b.revealed[index] || b.flagged[index]) {
             return Ok(());
         }
         
@@ -648,12 +671,12 @@ impl CompatGameState {
      */
     pub fn toggle_flag(&mut self, index: usize) -> Result<(), JsValue> {
         // 既に開いているセルはフラグ不可
-        if self.board.revealed[index] {
+        if self.board.as_ref().map_or(true, |b| b.revealed[index]) {
             return Ok(());
         }
         
         // フラグのトグル
-        self.board.flagged[index] = !self.board.flagged[index];
+        self.board.as_mut().unwrap().flagged[index] = !self.board.as_mut().unwrap().flagged[index];
         
         // ゲームステータスを更新
         self.update_game_status();
@@ -708,4 +731,91 @@ impl CompatGameState {
             0
         }
     }
+
+    pub fn init_board(&mut self, width: u32, height: u32, mine_count: u32) {
+        // ボードを新規作成
+        self.board = Some(Board::new(width as usize, height as usize, mine_count as usize, 30.0));
+        
+        // GameStateResourceも更新
+        // 備考：GameStateResourceのメソッドがないため、コメントアウト
+        // if let Some(game_state) = self.ecs_game.get_resource_mut::<GameStateResource>() {
+        //     game_state.initialize();
+        // }
+    }
+
+    fn on_cell_revealed(&mut self, index: usize, revealed_by: &str) -> Result<(), JsValue> {
+        // 自分のボードを直接参照
+        if let Some(board) = &mut self.board {
+            if !board.revealed[index] {
+                // 初めて開かれたセル
+                board.revealed[index] = true;
+
+                // 得点処理
+                if let Some(local_id) = &self.local_player_id {
+                    if revealed_by == local_id {
+                        if let Some(value) = get_cell_value(&board.cells[index]) {
+                            if value > 0 {
+                                // 数字セルを開いた場合、より高い数字ほど多く得点
+                                // スコア処理は実装必要
+                                // self.increase_score(value as u32 * 10);
+                            } else {
+                                // 空白セルは最小得点
+                                // self.increase_score(5);
+                            }
+                        }
+                    }
+                }
+
+                // 地雷セルを開いた場合、ゲームオーバー
+                if let CellValue::Mine = board.cells[index] {
+                    board.game_over = true;
+                    board.win = false;
+                    
+                    // GameStateResourceの状態も更新 - 注：end_gameメソッドがないためコメントアウト
+                    // if let Some(game_state) = self.ecs_game.get_resource_mut::<GameStateResource>() {
+                    //     game_state.end_game(false);
+                    // }
+                }
+
+                // 全ての非地雷セルが開かれたらゲームクリア
+                let non_mine_cells = board.cells.iter().filter(|&c| !is_mine(c)).count();
+                let revealed_count = board.revealed.iter().filter(|&r| *r).count();
+                
+                if revealed_count >= non_mine_cells {
+                    board.game_over = true;
+                    board.win = true;
+                    
+                    // GameStateResourceの状態も更新 - 注：end_gameメソッドがないためコメントアウト
+                    // if let Some(game_state) = self.ecs_game.get_resource_mut::<GameStateResource>() {
+                    //     game_state.end_game(true);
+                    // }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// ゲームステートを取得するメソッド
+    pub fn get_game_state(&self) -> &GameStateResource {
+        self.ecs_game.get_resource::<GameStateResource>().expect("GameStateResource not found")
+    }
+
+    /// ゲームステートをミュータブルで取得するメソッド
+    pub fn get_game_state_mut(&mut self) -> &mut GameStateResource {
+        self.ecs_game.get_resource_mut::<GameStateResource>().expect("GameStateResource not found")
+    }
+}
+
+/// セルの値を取得する関数
+fn get_cell_value(cell: &CellValue) -> Option<u8> {
+    match cell {
+        CellValue::Empty(value) => Some(*value),
+        _ => None
+    }
+}
+
+/// セルが地雷かどうかを判定する関数
+fn is_mine(cell: &CellValue) -> bool {
+    matches!(cell, CellValue::Mine)
 } 

@@ -203,9 +203,6 @@ impl GameConfigResource {
     }
 }
 
-// Resourceトレイトの実装
-impl Resource for GameConfigResource {}
-
 impl Default for GameConfigResource {
     fn default() -> Self {
         Self::new()

@@ -6,11 +6,13 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::any::Any;
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
 
 use crate::entities::EntityManager;
 use crate::entities::EntityId;
-use crate::systems::system_registry::DeltaTime;
+use crate::systems::optimized::system_scheduler::DeltaTime;
 use crate::resources::{
     BoardConfigResource,
     BoardStateResource,
@@ -23,39 +25,18 @@ use crate::components::board_components::{CellStateComponent, CellState, CellCon
 use crate::models::CellValue;
 use crate::ecs::system::{System, SystemResult};
 use crate::resources::ResourceManager;
+use crate::resources::{
+    BoardResource,
+    GameStateResource,
+};
+use crate::resources::BoardConfig;
 
-/// セル公開システム
-/// 指定されたセルを公開する
+/// セル公開システム - セルを公開する処理を担当
 pub fn cell_reveal_system(
-    entity_manager: &mut EntityManager,
-    resources: &mut HashMap<&'static str, Rc<RefCell<dyn std::any::Any>>>,
-    _delta_time: DeltaTime,
+    resources: &mut ResourceManager,
+    _delta_time: DeltaTime
 ) -> Result<(), JsValue> {
-    // 必要なリソースを取得
-    let board_config = resources.get("board_config").and_then(|res| {
-        res.borrow().downcast_ref::<BoardConfigResource>().cloned()
-    });
-    
-    let board_state = resources.get("board_state").and_then(|res| {
-        res.borrow().downcast_ref::<BoardStateResource>().cloned()
-    });
-    
-    // 両方のリソースが存在する場合のみ処理を続行
-    if let (Some(config), Some(mut state)) = (board_config, board_state) {
-        // ゲームが終了していない場合のみ処理を実行
-        if !state.is_game_over && !state.is_win {
-            // ここでは実際に処理するセルはイベントシステムから指定される想定
-            // このモジュール内のreveal_cellを使用して外部から呼び出す
-            
-            // 状態に変更があった場合、リソースを更新
-            if let Some(board_state_rc) = resources.get("board_state") {
-                if let Some(mut board_state_mut) = board_state_rc.borrow_mut().downcast_mut::<BoardStateResource>() {
-                    *board_state_mut = state;
-                }
-            }
-        }
-    }
-    
+    // セル公開ロジックをここに実装
     Ok(())
 }
 
@@ -65,177 +46,47 @@ pub fn reveal_cell(
     row: usize,
     col: usize,
     entity_manager: &mut EntityManager,
-    board_state: &mut BoardStateResource,
-    board_config: &BoardConfigResource,
+    board_state: &mut BoardResource,
+    board_config: &BoardConfig,
 ) -> Result<bool, JsValue> {
-    // ゲームが終了している場合は何もしない
-    if board_state.is_game_over || board_state.is_win {
+    // ゲームが終了している条件をcheck_win_conditionの結果で判断
+    if board_state.check_win_condition() {
         return Ok(false);
     }
     
     // 座標が有効かチェック
-    if !board_config.is_valid_position(row, col) {
+    let width = board_config.width;
+    if row >= board_config.height || col >= width {
         return Ok(false);
     }
     
-    // セルのエンティティを取得
-    let cell_entity = match board_state.get_cell_entity(row, col) {
-        Some(entity) => entity,
-        None => return Ok(false),
-    };
-    
-    // セルの状態を取得
-    let cell_state = match entity_manager.get_component::<CellStateComponent>(cell_entity) {
-        Some(state) => state.clone(),
-        None => return Ok(false),
-    };
+    // セルのインデックスを計算
+    let cell_index = row * width + col;
     
     // すでに公開済み、またはフラグが立っている場合は何もしない
-    if cell_state.state == CellState::Revealed || cell_state.state == CellState::Flagged {
+    if board_state.cells[cell_index].is_revealed() || board_state.cells[cell_index].is_flagged() {
         return Ok(false);
     }
     
     // 最初のクリックの場合
     if board_state.first_click {
-        board_state.first_click = false;
-        
-        // 地雷の配置をここで行う
-        // この実装は別のシステムで行われている想定
+        // ボードを初期化（地雷配置）
+        board_state.initialize(cell_index);
     }
     
-    // セルの内容を取得
-    let cell_content = match entity_manager.get_component::<CellContentComponent>(cell_entity) {
-        Some(content) => content.clone(),
-        None => return Ok(false),
-    };
+    // セルを公開
+    let exploded = board_state.reveal_cell(cell_index);
     
-    // セルの状態を公開状態に変更
-    if let Some(mut cell_state) = entity_manager.get_component_mut::<CellStateComponent>(cell_entity) {
-        cell_state.state = CellState::Revealed;
+    if exploded {
+        // 地雷を踏んだ場合はすべての地雷を表示
+        board_state.reveal_all_mines();
+        return Ok(true);
     }
     
-    // セルの内容に応じた処理
-    match cell_content.value {
-        CellValue::Mine => {
-            // 地雷を踏んだ場合はゲームオーバー
-            board_state.is_game_over = true;
-            
-            // すべての地雷を公開
-            reveal_all_mines(entity_manager, board_state);
-            
-            return Ok(true);
-        },
-        CellValue::Empty(0) => {
-            // 隣接地雷がない場合は周囲のセルも自動的に公開
-            board_state.remaining_safe_cells -= 1;
-            auto_reveal_adjacent_cells(row, col, entity_manager, board_state, board_config)?;
-            
-            // 勝利条件をチェック
-            check_win_condition(board_state);
-            
-            return Ok(true);
-        },
-        CellValue::Empty(_) => {
-            // 通常のセル
-            board_state.remaining_safe_cells -= 1;
-            
-            // 勝利条件をチェック
-            check_win_condition(board_state);
-            
-            return Ok(true);
-        }
-    }
-}
-
-/// 隣接するセルを自動的に公開する（再帰的に）
-fn auto_reveal_adjacent_cells(
-    row: usize,
-    col: usize,
-    entity_manager: &mut EntityManager,
-    board_state: &mut BoardStateResource,
-    board_config: &BoardConfigResource,
-) -> Result<(), JsValue> {
-    // 隣接するセルの座標を取得
-    let adjacent_positions = board_state.get_adjacent_positions(row, col, board_config);
+    // 勝利条件をチェック
+    let is_win = board_state.check_win_condition();
     
-    // 各隣接セルに対して処理
-    for (adj_row, adj_col) in adjacent_positions {
-        // 隣接セルのエンティティを取得
-        if let Some(adj_entity) = board_state.get_cell_entity(adj_row, adj_col) {
-            // すでに公開済みのセルは処理しない
-            if let Some(adj_state) = entity_manager.get_component::<CellStateComponent>(adj_entity) {
-                if adj_state.state == CellState::Revealed {
-                    continue;
-                }
-                
-                // フラグが立っているセルは公開しない
-                if adj_state.state == CellState::Flagged {
-                    continue;
-                }
-                
-                // セルの内容を確認
-                if let Some(adj_content) = entity_manager.get_component::<CellContentComponent>(adj_entity) {
-                    match adj_content.value {
-                        CellValue::Empty(0) => {
-                            // 隣接地雷がない場合は公開して再帰的に処理
-                            if let Some(mut adj_state) = entity_manager.get_component_mut::<CellStateComponent>(adj_entity) {
-                                // 未公開のセルのみ処理
-                                if adj_state.state != CellState::Revealed {
-                                    adj_state.state = CellState::Revealed;
-                                    board_state.remaining_safe_cells -= 1;
-                                    
-                                    // 再帰的に隣接セルを公開
-                                    auto_reveal_adjacent_cells(adj_row, adj_col, entity_manager, board_state, board_config)?;
-                                }
-                            }
-                        },
-                        CellValue::Empty(_) => {
-                            // 数字のセルは公開するだけ
-                            if let Some(mut adj_state) = entity_manager.get_component_mut::<CellStateComponent>(adj_entity) {
-                                // 未公開のセルのみ処理
-                                if adj_state.state != CellState::Revealed {
-                                    adj_state.state = CellState::Revealed;
-                                    board_state.remaining_safe_cells -= 1;
-                                }
-                            }
-                        },
-                        CellValue::Mine => {
-                            // 地雷は何もしない
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-/// すべての地雷を公開する
-fn reveal_all_mines(
-    entity_manager: &mut EntityManager,
-    board_state: &mut BoardStateResource,
-) {
-    // すべてのセルエンティティを走査
-    for (_, entity_id) in board_state.cell_grid.iter() {
-        // 地雷を含むセルを特定
-        if let Some(content) = entity_manager.get_component::<CellContentComponent>(*entity_id) {
-            if let CellValue::Mine = content.value {
-                // 地雷セルを公開
-                if let Some(mut state) = entity_manager.get_component_mut::<CellStateComponent>(*entity_id) {
-                    state.state = CellState::Revealed;
-                }
-            }
-        }
-    }
-}
-
-/// 勝利条件をチェック
-fn check_win_condition(board_state: &mut BoardStateResource) {
-    // 残りの安全なセルがなければ勝利
-    if board_state.remaining_safe_cells == 0 {
-        board_state.is_win = true;
-    }
+    Ok(true)
 }
 
 /**
@@ -258,52 +109,53 @@ impl CellRevealSystem {
 impl System for CellRevealSystem {
     fn update(&mut self, entity_manager: &mut EntityManager, resources: &mut ResourceManager) -> SystemResult {
         // プレイヤーの状態とボードの状態を取得
-        let player_state = match resources.get::<PlayerStateResource>() {
-            Some(state) => state,
-            None => return SystemResult::Ok, // プレイヤー状態がなければ何もしない
-        };
+        let board_state = resources.get::<BoardResource>();
+        let player_state = resources.get::<PlayerStateResource>();
         
-        let board_state = match resources.get::<BoardStateResource>() {
-            Some(state) => state,
-            None => return SystemResult::Ok, // ボード状態がなければ何もしない
-        };
-        
-        // ゲームが終了している場合は何もしない
-        if board_state.is_game_over || board_state.is_win {
-            return SystemResult::Ok;
-        }
-        
-        // マウスの左ボタンが押されていない場合は何もしない
-        if player_state.mouse_state != MouseState::LeftDown {
-            return SystemResult::Ok;
-        }
-        
-        // ボード設定を取得
-        let board_config = match resources.get::<BoardConfigResource>() {
-            Some(config) => config,
-            None => return SystemResult::Ok, // ボード設定がなければ何もしない
-        };
-        
-        // マウス座標からセルの位置を計算
-        let cell_size = 30.0; // 本来はBoardConfigResourceから取得
-        let col = (player_state.mouse_x as f64 / cell_size) as usize;
-        let row = (player_state.mouse_y as f64 / cell_size) as usize;
-        
-        // 範囲外のクリックは無視
-        if row >= board_config.height || col >= board_config.width {
-            return SystemResult::Ok;
-        }
-        
-        // 可変参照へ変換
-        let mut board_state = match resources.get_mut::<BoardStateResource>() {
-            Some(state) => state,
-            None => return SystemResult::Ok,
-        };
-        
-        // セル公開処理を実行
-        match reveal_cell(row, col, entity_manager, &mut board_state, &board_config) {
-            Ok(_) => (),
-            Err(_) => return SystemResult::Error,
+        if let (Ok(board_state), Ok(player_state)) = (board_state, player_state) {
+            // ボードとプレイヤーの状態の取得に成功した場合
+            let board_state_ref = board_state.borrow();
+            let player_state_ref = player_state.borrow();
+            
+            // 型変換にも成功した場合のみ処理を続行
+            if let (Some(board), Some(player)) = (
+                board_state_ref.downcast_ref::<BoardResource>(),
+                player_state_ref.downcast_ref::<PlayerStateResource>()
+            ) {
+                // ゲームが終了している場合は何もしない
+                if board.check_win_condition() {
+                    return SystemResult::Ok;
+                }
+                
+                // マウスが左クリックされた時だけ処理
+                if player.mouse_state.get_state() != MouseState::LeftDown {
+                    return SystemResult::Ok;
+                }
+                
+                // マウス座標からセルの位置を計算
+                let cell_size = board.config.cell_size as f64;
+                let col = (player.mouse_state.x as f64 / cell_size) as usize;
+                let row = (player.mouse_state.y as f64 / cell_size) as usize;
+                
+                // 範囲外チェック
+                if row >= board.config.height || col >= board.config.width {
+                    return SystemResult::Ok;
+                }
+                
+                // 可変参照を取得して処理
+                if let Ok(board_state_mut) = resources.get_mut::<BoardResource>() {
+                    if let Some(mut board_mut) = board_state_mut.borrow_mut().downcast_mut::<BoardResource>() {
+                        // configを事前にコピー
+                        let config = board_mut.config.clone();
+                        
+                        // セルを公開
+                        match reveal_cell(row, col, entity_manager, &mut board_mut, &config) {
+                            Ok(_) => (),
+                            Err(_) => return SystemResult::Error,
+                        }
+                    }
+                }
+            }
         }
         
         SystemResult::Ok

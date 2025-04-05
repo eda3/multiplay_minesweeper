@@ -3,7 +3,7 @@
  * 
  * マルチプレイヤーゲームにおけるプレイヤーをエンティティとして表現
  */
-use crate::components::{PlayerComponent, Position};
+use crate::components::{Player, Position};
 use crate::entities::entity::{Entity, EntityId};
 use crate::entities::entity_manager::EntityBuilder;
 
@@ -39,7 +39,7 @@ impl PlayerEntity {
 /// ローカルプレイヤーエンティティを作成
 pub fn create_local_player(builder: EntityBuilder, id: String, x: f64, y: f64) -> Entity {
     builder
-        .with_component(PlayerComponent::local(id))
+        .with_component(Player::local(id, "Player".to_string()))
         .with_component(Position::new(x, y))
         .with_tag(PLAYER_TAG)
         .with_tag(LOCAL_PLAYER_TAG)
@@ -49,7 +49,7 @@ pub fn create_local_player(builder: EntityBuilder, id: String, x: f64, y: f64) -
 /// リモートプレイヤーエンティティを作成
 pub fn create_remote_player(builder: EntityBuilder, id: String, color: String, x: f64, y: f64) -> Entity {
     builder
-        .with_component(PlayerComponent::remote(id, color))
+        .with_component(Player::remote(id, "Remote".to_string(), color))
         .with_component(Position::new(x, y))
         .with_tag(PLAYER_TAG)
         .with_tag(REMOTE_PLAYER_TAG)
@@ -79,7 +79,7 @@ pub mod player_operations {
                 position.y = y;
                 
                 // プレイヤーコンポーネントの最終更新時間も更新
-                if let Some(player) = entity.get_component_mut::<PlayerComponent>() {
+                if let Some(player) = entity.get_component_mut::<Player>() {
                     player.update_action_time();
                 }
                 
@@ -98,10 +98,10 @@ pub mod player_operations {
     }
     
     /// プレイヤー情報を取得
-    pub fn get_player_info(manager: &EntityManager, id: EntityId) -> Option<PlayerComponent> {
+    pub fn get_player_info(manager: &EntityManager, id: EntityId) -> Option<Player> {
         manager.get_entity(id)
-            .and_then(|entity| entity.get_component::<PlayerComponent>())
-            .cloned()
+            .and_then(|entity| entity.get_component::<Player>())
+            .map(|p| p.clone())
     }
     
     /// ローカルプレイヤーのエンティティIDを取得
@@ -119,7 +119,7 @@ pub mod player_operations {
             .into_iter()
             .filter(|id| {
                 if let Some(entity) = manager.get_entity(*id) {
-                    if let Some(player) = entity.get_component::<PlayerComponent>() {
+                    if let Some(player) = entity.get_component::<Player>() {
                         // タイムアウト時間より長く操作がないプレイヤーを検出
                         return current_time - player.last_action_time > timeout_ms;
                     }

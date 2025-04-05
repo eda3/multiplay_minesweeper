@@ -1,32 +1,47 @@
 /**
  * リソースマネージャー
  * 
- * ECSパターンでグローバルに共有されるリソースを管理します。
- * 型ごとに一意のリソースインスタンスを保持します。
+ * ゲーム全体のリソースを管理するクラス
  */
 use std::any::{Any, TypeId};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::cell::{RefCell, Ref, RefMut};
-use std::marker::PhantomData;
+use std::rc::Rc;
 
 use super::resource_trait::Resource;
 
-/// リソースマネージャー
-/// 型安全にさまざまなリソースを保持・管理する
-#[derive(Default)]
-pub struct ResourceManager {
-    /// リソースを型IDで管理するマップ
-    resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+/// リソースの取得に失敗した場合のエラー
+#[derive(Debug, Clone)]
+pub enum ResourceError {
+    /// リソースが見つからない
+    NotFound(String),
+    /// 型が一致しない
+    WrongType(String),
+    /// すでに存在する
+    AlreadyExists(String),
 }
 
-impl Debug for ResourceManager {
+impl std::fmt::Display for ResourceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResourceManager")
-            .field("resource_count", &self.resources.len())
-            .field("resource_type_ids", &self.resources.keys().collect::<Vec<_>>())
-            .finish()
+        match self {
+            ResourceError::NotFound(msg) => write!(f, "リソースが見つかりません: {}", msg),
+            ResourceError::WrongType(msg) => write!(f, "リソースの型が違います: {}", msg),
+            ResourceError::AlreadyExists(msg) => write!(f, "リソースはすでに存在します: {}", msg),
+        }
     }
+}
+
+/// リソースの結果型
+pub type ResourceResult<T> = Result<T, ResourceError>;
+
+/// リソースマネージャー
+/// 
+/// アプリケーション全体で共有されるリソースを管理
+#[derive(Debug, Default)]
+pub struct ResourceManager {
+    /// リソースマップ
+    resources: HashMap<TypeId, Rc<RefCell<dyn Any>>>,
 }
 
 impl ResourceManager {
@@ -37,249 +52,258 @@ impl ResourceManager {
         }
     }
     
-    /// リソースを追加または更新
-    pub fn insert<R: Resource>(&mut self, resource: R) {
+    /// リソースを追加
+    pub fn add<R: Resource>(&mut self, resource: R) -> ResourceResult<()> {
         let type_id = TypeId::of::<R>();
-        self.resources.insert(type_id, Box::new(resource));
+        
+        if self.resources.contains_key(&type_id) {
+            return Err(ResourceError::AlreadyExists(
+                std::any::type_name::<R>().to_string(),
+            ));
+        }
+        
+        self.resources.insert(type_id, Rc::new(RefCell::new(resource)));
+        Ok(())
     }
     
-    /// リソースへの不変参照を取得
-    pub fn get<R: Resource>(&self) -> Option<&R> {
+    /// リソースを取得
+    pub fn get<R: Resource>(&self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
         let type_id = TypeId::of::<R>();
+        
         self.resources
             .get(&type_id)
-            .and_then(|boxed| boxed.downcast_ref::<R>())
+            .cloned()
+            .ok_or_else(|| {
+                ResourceError::NotFound(std::any::type_name::<R>().to_string())
+            })
     }
     
-    /// リソースへの可変参照を取得
-    pub fn get_mut<R: Resource>(&mut self) -> Option<&mut R> {
+    /// リソースを更新（既存のものを置き換え）
+    pub fn update<R: Resource>(&mut self, resource: R) -> ResourceResult<()> {
         let type_id = TypeId::of::<R>();
-        self.resources
-            .get_mut(&type_id)
-            .and_then(|boxed| boxed.downcast_mut::<R>())
+        
+        if !self.resources.contains_key(&type_id) {
+            return Err(ResourceError::NotFound(
+                std::any::type_name::<R>().to_string(),
+            ));
+        }
+        
+        self.resources.insert(type_id, Rc::new(RefCell::new(resource)));
+        Ok(())
     }
     
-    /// リソースが存在するかチェック
-    pub fn contains<R: Resource>(&self) -> bool {
+    /// リソースを削除
+    pub fn remove<R: Resource>(&mut self) -> Result<(), ResourceError> {
+        let type_id = TypeId::of::<R>();
+        if self.resources.remove(&type_id).is_some() {
+            Ok(())
+        } else {
+            Err(ResourceError::NotFound(
+                std::any::type_name::<R>().to_string(),
+            ))
+        }
+    }
+    
+    /// リソースがあるかどうかを確認
+    pub fn has<R: Resource>(&self) -> bool {
         let type_id = TypeId::of::<R>();
         self.resources.contains_key(&type_id)
     }
     
-    /// リソースを削除し、削除したリソースを返す
-    pub fn remove<R: Resource>(&mut self) -> Option<R> {
-        let type_id = TypeId::of::<R>();
-        self.resources
-            .remove(&type_id)
-            .and_then(|boxed| boxed.downcast::<R>().ok())
-            .map(|boxed| *boxed)
-    }
-    
-    /// 全リソースをクリア
+    /// すべてのリソースをクリア
     pub fn clear(&mut self) {
         self.resources.clear();
     }
     
     /// リソースの数を取得
-    pub fn len(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.resources.len()
     }
     
-    /// リソースが空かどうか
+    /// 新しいリソースを追加するか、既存のリソースを更新
+    pub fn add_or_update<R: Resource>(&mut self, resource: R) {
+        let type_id = TypeId::of::<R>();
+        self.resources.insert(type_id, Rc::new(RefCell::new(resource)));
+    }
+    
+    /// リソースを取得し、指定した型にダウンキャスト
+    pub fn get_as<R: Resource + Clone>(&self) -> ResourceResult<Rc<RefCell<R>>> {
+        let rc = self.get::<R>()?;
+        
+        // 型を確認し、適切な型のRc<RefCell<R>>を返す
+        // これはリソースの型が正しいことを保証するために行う
+        let borrowed = rc.borrow();
+        if let Some(resource) = borrowed.downcast_ref::<R>() {
+            // リソースをクローンして新しいRc<RefCell>を作成
+            let resource_clone = resource.clone();
+            return Ok(Rc::new(RefCell::new(resource_clone)));
+        }
+        
+        Err(ResourceError::WrongType(
+            format!(
+                "リソースの型が一致しません。期待: {}, 実際: unknown",
+                std::any::type_name::<R>()
+            )
+        ))
+    }
+
+    /// リソースが存在するかチェック
+    pub fn contains<R: Resource>(&self) -> bool {
+        let type_id = TypeId::of::<R>();
+        self.resources.contains_key(&type_id)
+    }
+
+    /// リソースを挿入
+    pub fn insert<R: Resource>(&mut self, resource: R) {
+        let type_id = TypeId::of::<R>();
+        let boxed: Box<dyn Any> = Box::new(resource);
+        let rc = Rc::new(RefCell::new(boxed));
+        self.resources.insert(type_id, rc);
+    }
+
+    /// リソースの数を取得
+    pub fn len(&self) -> usize {
+        self.resources.len()
+    }
+
+    /// リソースマネージャーが空かどうかを取得
     pub fn is_empty(&self) -> bool {
         self.resources.is_empty()
     }
-    
-    /// 複数のリソースへの参照を同時に取得（2つのケース）
-    pub fn get_multi<A: 'static + Resource, B: 'static + Resource>(&self) -> Option<(&A, &B)> {
-        let a = self.get::<A>()?;
-        let b = self.get::<B>()?;
-        Some((a, b))
+
+    /// エンティティの数を取得（EntityManagerとの互換性のため）
+    pub fn get_entity_count(&self) -> usize {
+        0 // 実際のエンティティマネージャーがなければ0を返す
     }
-    
-    /// 複数のリソースへの可変参照を同時に取得（2つのケース）
-    pub fn get_multi_mut<A: 'static + Resource, B: 'static + Resource>(&mut self) -> Option<(&mut A, &mut B)> {
-        // 同じ型への可変参照を防ぐ
-        if TypeId::of::<A>() == TypeId::of::<B>() {
-            return None;
-        }
-        
-        // 安全でない方法で複数の可変参照を取得
-        // この実装は例示的なもので、実際には内部可変性や追加のチェックが必要
-        unsafe {
-            let a_ptr = self.get_mut::<A>()? as *mut A;
-            let b_ptr = self.get_mut::<B>()? as *mut B;
-            Some((&mut *a_ptr, &mut *b_ptr))
-        }
+
+    /// リソースを取得（可変）
+    pub fn get_mut<R: Resource>(&mut self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
+        self.get::<R>()
     }
-    
-    /// 複数のリソースを読み取りモードでバッチ処理
-    pub fn batch<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&ResourceBatch<dyn Resource>) -> R,
-    {
-        // 安全なリソースバッチを作成
-        let empty_batch = ResourceBatch { resource: &() as &dyn Resource };
-        f(&empty_batch)
+
+    pub fn resources(&self) -> &HashMap<TypeId, Rc<RefCell<dyn Any>>> {
+        &self.resources
     }
-    
-    /// 複数のリソースを書き込みモードでバッチ処理
-    pub fn batch_mut<F, R>(&mut self, f: F) -> R
-    where
-        F: FnOnce(&mut ResourceBatchMut<dyn Resource>) -> R,
-    {
-        // 安全なリソースバッチを作成
-        let mut empty_batch = ResourceBatchMut { resource: &mut () as &mut dyn Resource };
-        f(&mut empty_batch)
-    }
-    
-    /// 読み取り専用リソースバッチの取得
-    pub fn fetch<R: Resource>(&self) -> ResourceBatch<R> {
-        ResourceBatch {
-            resource: self.get::<R>().expect("指定されたリソースが見つかりません"),
-        }
-    }
-    
-    /// 書き込み可能リソースバッチの取得
-    pub fn fetch_mut<R: Resource>(&mut self) -> ResourceBatchMut<R> {
-        ResourceBatchMut {
-            resource: self.get_mut::<R>().expect("指定されたリソースが見つかりません"),
-        }
+
+    pub fn get_by_type_id(&self, type_id: &TypeId) -> Option<Rc<RefCell<dyn Any>>> {
+        self.resources.get(type_id).cloned()
     }
 }
 
-/// 読み取り専用リソースへのアクセスを提供する構造体
-pub struct ResourceBatch<'a, R: Resource + ?Sized> {
-    resource: &'a R,
-}
-
-impl<'a, R: Resource + ?Sized> ResourceBatch<'a, R> {
-    pub fn resource(&self) -> &R {
-        self.resource
-    }
-}
-
-/// 可変リソースへのアクセスを提供する構造体
-pub struct ResourceBatchMut<'a, R: Resource + ?Sized> {
-    resource: &'a mut R,
-}
-
-impl<'a, R: Resource + ?Sized> ResourceBatchMut<'a, R> {
-    pub fn resource(&self) -> &R {
-        self.resource
-    }
-
-    pub fn resource_mut(&mut self) -> &mut R {
-        self.resource
-    }
-}
-
+// テスト
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[derive(Debug, PartialEq)]
+    
+    // テスト用のダミーリソース
+    #[derive(Debug, Clone, PartialEq)]
     struct TestResource {
-        value: i32,
+        pub value: i32,
     }
-
-    #[derive(Debug, PartialEq)]
-    struct OtherResource {
-        name: String,
-    }
-
+    
+    impl Resource for TestResource {}
+    
     #[test]
-    fn test_insert_and_get() {
+    fn test_add_and_get_resource() {
+        let mut manager = ResourceManager::new();
+        let resource = TestResource { value: 42 };
+        
+        // リソースを追加
+        assert!(manager.add(resource.clone()).is_ok());
+        
+        // リソースを取得
+        let retrieved = manager.get::<TestResource>().unwrap();
+        let borrowed = retrieved.borrow();
+        let cast = borrowed.downcast_ref::<TestResource>().unwrap();
+        assert_eq!(cast.value, 42);
+    }
+    
+    #[test]
+    fn test_add_duplicate_resource() {
+        let mut manager = ResourceManager::new();
+        let resource = TestResource { value: 42 };
+        
+        // 最初の追加は成功するはず
+        assert!(manager.add(resource.clone()).is_ok());
+        
+        // 同じ型の2回目の追加は失敗するはず
+        assert!(manager.add(resource.clone()).is_err());
+    }
+    
+    #[test]
+    fn test_update_resource() {
+        let mut manager = ResourceManager::new();
+        let resource1 = TestResource { value: 42 };
+        let resource2 = TestResource { value: 43 };
+        
+        // リソースを追加
+        assert!(manager.add(resource1).is_ok());
+        
+        // リソースを更新
+        assert!(manager.update(resource2).is_ok());
+        
+        // 更新されたリソースを確認
+        let retrieved = manager.get::<TestResource>().unwrap();
+        let borrowed = retrieved.borrow();
+        let cast = borrowed.downcast_ref::<TestResource>().unwrap();
+        assert_eq!(cast.value, 43);
+    }
+    
+    #[test]
+    fn test_remove_resource() {
+        let mut manager = ResourceManager::new();
+        let resource = TestResource { value: 42 };
+        
+        // リソースを追加
+        assert!(manager.add(resource).is_ok());
+        assert!(manager.has::<TestResource>());
+        
+        // リソースを削除
+        assert!(manager.remove::<TestResource>().is_ok());
+        assert!(!manager.has::<TestResource>());
+        
+        // 存在しないリソースの削除は失敗するはず
+        assert!(manager.remove::<TestResource>().is_err());
+    }
+    
+    #[test]
+    fn test_add_or_update() {
+        let mut manager = ResourceManager::new();
+        let resource1 = TestResource { value: 42 };
+        let resource2 = TestResource { value: 43 };
+        
+        // 存在しないリソースの追加
+        manager.add_or_update(resource1);
+        assert!(manager.has::<TestResource>());
+        
+        // 既存のリソースの更新
+        manager.add_or_update(resource2);
+        
+        // 更新されたリソースを確認
+        let retrieved = manager.get::<TestResource>().unwrap();
+        let borrowed = retrieved.borrow();
+        let cast = borrowed.downcast_ref::<TestResource>().unwrap();
+        assert_eq!(cast.value, 43);
+    }
+    
+    #[test]
+    fn test_clear_resources() {
         let mut manager = ResourceManager::new();
         
-        manager.insert(TestResource { value: 42 });
-        let resource = manager.get::<TestResource>();
+        // 複数のリソースを追加
+        manager.add(TestResource { value: 42 }).unwrap();
         
-        assert!(resource.is_some());
-        assert_eq!(resource.unwrap().value, 42);
-    }
-
-    #[test]
-    fn test_get_mut() {
-        let mut manager = ResourceManager::new();
+        #[derive(Debug)]
+        struct AnotherResource;
+        impl Resource for AnotherResource {}
         
-        manager.insert(TestResource { value: 42 });
+        manager.add(AnotherResource).unwrap();
         
-        // 参照を取得して変更
-        if let Some(resource) = manager.get_mut::<TestResource>() {
-            resource.value = 100;
-        }
+        assert_eq!(manager.count(), 2);
         
-        // 変更が反映されていることを確認
-        let resource = manager.get::<TestResource>().unwrap();
-        assert_eq!(resource.value, 100);
-    }
-
-    #[test]
-    fn test_remove() {
-        let mut manager = ResourceManager::new();
-        
-        manager.insert(TestResource { value: 42 });
-        assert!(manager.contains::<TestResource>());
-        
-        let removed = manager.remove::<TestResource>();
-        assert!(removed.is_some());
-        assert_eq!(removed.unwrap().value, 42);
-        
-        // 削除後は存在しない
-        assert!(!manager.contains::<TestResource>());
-    }
-
-    #[test]
-    fn test_multi_resource() {
-        let mut manager = ResourceManager::new();
-        
-        manager.insert(TestResource { value: 42 });
-        manager.insert(OtherResource { name: "Test".to_string() });
-        
-        // 複数リソースの参照を取得
-        let (test, other) = manager.get_multi::<TestResource, OtherResource>().unwrap();
-        assert_eq!(test.value, 42);
-        assert_eq!(other.name, "Test");
-        
-        // 複数リソースの可変参照を取得
-        let (test_mut, other_mut) = manager.get_multi_mut::<TestResource, OtherResource>().unwrap();
-        test_mut.value = 100;
-        other_mut.name = "Updated".to_string();
-        
-        // 変更が反映されていることを確認
-        let (test, other) = manager.get_multi::<TestResource, OtherResource>().unwrap();
-        assert_eq!(test.value, 100);
-        assert_eq!(other.name, "Updated");
-    }
-
-    #[test]
-    fn test_batch() {
-        let mut manager = ResourceManager::new();
-        
-        manager.insert(TestResource { value: 42 });
-        manager.insert(OtherResource { name: "Test".to_string() });
-        
-        // 読み取りバッチ
-        let result = manager.batch(|batch| {
-            let test = batch.read::<TestResource>().unwrap();
-            let other = batch.read::<OtherResource>().unwrap();
-            test.value + other.name.len() as i32
-        });
-        
-        assert_eq!(result, 42 + 4);
-        
-        // 書き込みバッチ
-        manager.batch_mut(|mut batch| {
-            if let Some(test) = batch.write::<TestResource>() {
-                test.value = 100;
-            }
-            if let Some(other) = batch.write::<OtherResource>() {
-                other.name = "Updated".to_string();
-            }
-        });
-        
-        // 変更が反映されていることを確認
-        assert_eq!(manager.get::<TestResource>().unwrap().value, 100);
-        assert_eq!(manager.get::<OtherResource>().unwrap().name, "Updated");
+        // すべてのリソースをクリア
+        manager.clear();
+        assert_eq!(manager.count(), 0);
+        assert!(!manager.has::<TestResource>());
     }
 } 

@@ -206,4 +206,15 @@ impl NetworkManager {
     pub fn set_local_player_id(&mut self, id: String) {
         self.local_player_id = Some(id);
     }
+}
+
+// Cloneトレイトの実装
+impl Clone for NetworkManager {
+    fn clone(&self) -> Self {
+        Self {
+            websocket: None, // WebSocketはクローンできないため、Noneにする
+            is_connected: self.is_connected,
+            local_player_id: self.local_player_id.clone(),
+        }
+    }
 } 

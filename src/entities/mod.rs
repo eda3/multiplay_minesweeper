@@ -6,7 +6,7 @@
  */
 
 // サブモジュールをエクスポート
-mod entity;
+pub mod entity;
 mod entity_manager;
 mod entity_id_generator;
 mod cell_entity;

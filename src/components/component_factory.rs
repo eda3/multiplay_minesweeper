@@ -34,7 +34,7 @@ impl ComponentFactory {
     }
     
     /// コンポーネント型を登録
-    pub fn register<T: Component + Default>(&mut self) {
+    pub fn register<T: Component + Default + Send + Sync + 'static>(&mut self) {
         let type_id = TypeId::of::<T>();
         let type_name = std::any::type_name::<T>().to_string();
         
