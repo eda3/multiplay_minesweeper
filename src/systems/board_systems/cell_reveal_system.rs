@@ -3,7 +3,7 @@
  * 
  * セルをクリックして内容を公開するシステム
  */
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::any::Any;
@@ -87,11 +87,8 @@ pub fn reveal_cell(
 
     // 周囲の地雷がない場合は周囲のセルも開く
     if let CellValue::Empty(0) = board.cells[index] {
-        // 周囲のセルを再帰的に開く
-        let adjacents = get_adjacent_cells(row, col, board.width, board.height);
-        for (adj_row, adj_col) in adjacents {
-            reveal_cell(adj_row, adj_col, entity_manager, board, false)?;
-        }
+        // 再帰処理を非再帰（イテレーティブ）に変更
+        reveal_connected_cells_iterative(row, col, entity_manager, board)?;
     }
 
     // 勝利条件をチェック
@@ -101,6 +98,60 @@ pub fn reveal_cell(
     }
 
     Ok(false) // 爆発しなかったのでfalseを返す
+}
+
+/// 連鎖的なセル公開を非再帰的に処理する関数
+fn reveal_connected_cells_iterative(
+    start_row: usize,
+    start_col: usize,
+    entity_manager: &mut EntityManager,
+    board: &mut Board
+) -> Result<(), JsValue> {
+    // キューを使って処理するセルを管理
+    let mut queue = VecDeque::new();
+    // 処理済みセルを記録するセット
+    let mut visited = HashSet::new();
+    
+    // 開始セルをキューに追加
+    queue.push_back((start_row, start_col));
+    
+    while let Some((row, col)) = queue.pop_front() {
+        // セルのインデックスを計算
+        let index = row * board.width + col;
+        
+        // 既に処理済みならスキップ
+        if visited.contains(&index) {
+            continue;
+        }
+        
+        // 処理済みとしてマーク
+        visited.insert(index);
+        
+        // 周囲のセルを取得して処理
+        let adjacents = get_adjacent_cells(row, col, board.width, board.height);
+        
+        for (adj_row, adj_col) in adjacents {
+            let adj_index = adj_row * board.width + adj_col;
+            
+            // 既に開いているセルや旗が立てられているセルは無視
+            if board.revealed[adj_index] || board.flagged[adj_index] {
+                continue;
+            }
+            
+            // セルを開く
+            board.revealed[adj_index] = true;
+            
+            // 残りの安全なセル数を減らす
+            board.remaining_safe_cells -= 1;
+            
+            // 周囲に地雷がない空のセルなら、そのセルも処理対象に追加
+            if let CellValue::Empty(0) = board.cells[adj_index] {
+                queue.push_back((adj_row, adj_col));
+            }
+        }
+    }
+    
+    Ok(())
 }
 
 pub fn check_win_condition(board: &mut Board) -> bool {
