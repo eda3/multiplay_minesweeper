@@ -44,3 +44,11 @@ wasm-logger = "0.2"
 opt-level = "s"
 lto = true
 codegen-units = 1
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.0"
+rand = "0.8.5"
+
+[[bench]]
+name = "reveal_benchmark"
+harness = true

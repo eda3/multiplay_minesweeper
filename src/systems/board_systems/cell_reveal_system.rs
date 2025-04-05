@@ -107,31 +107,40 @@ fn reveal_connected_cells_iterative(
     entity_manager: &mut EntityManager,
     board: &mut Board
 ) -> Result<(), JsValue> {
-    // キューを使って処理するセルを管理
-    let mut queue = VecDeque::new();
-    // 処理済みセルを記録するセット
-    let mut visited = HashSet::new();
+    // キューを使って処理するセルを管理（事前に容量確保）
+    let estimated_capacity = (board.width * board.height) / 4; // 盤面の25%の容量を事前確保
+    let mut queue = VecDeque::with_capacity(estimated_capacity);
+    
+    // 処理済みセルを記録するセット（こちらも事前に容量確保）
+    let mut visited = HashSet::with_capacity(estimated_capacity);
     
     // 開始セルをキューに追加
     queue.push_back((start_row, start_col));
+    
+    // 隣接セル座標用のバッファを事前に確保（再利用）
+    let mut adjacent_buffer = Vec::with_capacity(8);
     
     while let Some((row, col)) = queue.pop_front() {
         // セルのインデックスを計算
         let index = row * board.width + col;
         
-        // 既に処理済みならスキップ
-        if visited.contains(&index) {
+        // 既に処理済みならスキップ - キャッシュヒット率を上げるため早めにチェック
+        if !visited.insert(index) {
             continue;
         }
         
-        // 処理済みとしてマーク
-        visited.insert(index);
-        
         // 周囲のセルを取得して処理
-        let adjacents = get_adjacent_cells(row, col, board.width, board.height);
+        adjacent_buffer.clear(); // バッファを再利用
+        get_adjacent_cells_optimized(row, col, board.width, board.height, &mut adjacent_buffer);
         
-        for (adj_row, adj_col) in adjacents {
+        // 隣接セルの一括処理
+        for &(adj_row, adj_col) in &adjacent_buffer {
             let adj_index = adj_row * board.width + adj_col;
+            
+            // 既に処理済みならスキップ（早期チェック）
+            if visited.contains(&adj_index) {
+                continue;
+            }
             
             // 既に開いているセルや旗が立てられているセルは無視
             if board.revealed[adj_index] || board.flagged[adj_index] {
@@ -152,6 +161,52 @@ fn reveal_connected_cells_iterative(
     }
     
     Ok(())
+}
+
+/// 指定したセルの周囲8方向のセル座標を最適化して取得
+/// 事前に確保された配列に結果を格納
+fn get_adjacent_cells_optimized(
+    row: usize, 
+    col: usize, 
+    width: usize, 
+    height: usize,
+    result: &mut Vec<(usize, usize)>
+) {
+    // 範囲チェックを最小限にするため、範囲内にあることが明らかな場合は直接追加
+    let row_top = row > 0;
+    let row_bottom = row < height - 1;
+    let col_left = col > 0;
+    let col_right = col < width - 1;
+    
+    // 上段
+    if row_top {
+        if col_left {
+            result.push((row - 1, col - 1));
+        }
+        result.push((row - 1, col));
+        if col_right {
+            result.push((row - 1, col + 1));
+        }
+    }
+    
+    // 中段
+    if col_left {
+        result.push((row, col - 1));
+    }
+    if col_right {
+        result.push((row, col + 1));
+    }
+    
+    // 下段
+    if row_bottom {
+        if col_left {
+            result.push((row + 1, col - 1));
+        }
+        result.push((row + 1, col));
+        if col_right {
+            result.push((row + 1, col + 1));
+        }
+    }
 }
 
 pub fn check_win_condition(board: &mut Board) -> bool {
