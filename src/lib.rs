@@ -20,12 +20,12 @@ use std::borrow::BorrowMut;
 
 // サブモジュールを登録
 mod js_bindings;
-mod models;
+pub mod models;
 mod game_state;
 mod utils;
 mod rendering;
 mod network;
-mod board;  // ボードモジュールを追加
+pub mod board;  // ボードモジュールを追加
 mod components; // ECSコンポーネント
 pub mod entities;   // ECSエンティティ
 
@@ -300,10 +300,8 @@ fn setup_event_listeners(canvas_id: &str) -> Result<(), JsValue> {
     Ok(())
 }
 
-// テスト統合用の設定
+// テストモジュールの実装（nightly以外のコンパイラではスキップ）
 #[cfg(test)]
 mod tests {
-    // 統合テストのインポート
-    #[path = "../tests/mod.rs"]
-    mod tests;
+    // テストケースをここに書く
 } 
