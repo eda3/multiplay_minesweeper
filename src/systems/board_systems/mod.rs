@@ -13,5 +13,6 @@ pub mod board_init_system;
 pub use board_init_system::board_init_system;
 pub use cell_reveal_system::cell_reveal_system;
 pub use cell_reveal_system::reveal_cell;
+pub use cell_reveal_system::get_adjacent_cells_cached;
 pub use flag_toggle_system::FlagToggleSystem;
 pub use win_condition_system::WinConditionSystem; 

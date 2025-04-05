@@ -120,9 +120,23 @@ fn reveal_connected_cells_iterative(
     // 隣接セル座標用のバッファを事前に確保（再利用）
     let mut adjacent_buffer = Vec::with_capacity(8);
     
+    // インデックス計算をキャッシュするためのルックアップテーブル
+    // 各行の先頭インデックスを事前計算
+    let mut row_offset_cache = Vec::with_capacity(board.height);
+    for row in 0..board.height {
+        row_offset_cache.push(row * board.width);
+    }
+    
+    // よく使う値をローカル変数にキャッシュ
+    let width = board.width;
+    let height = board.height;
+    
+    // バッチ処理のために開くセルを蓄積
+    let mut cells_to_reveal = Vec::with_capacity(estimated_capacity);
+    
     while let Some((row, col)) = queue.pop_front() {
-        // セルのインデックスを計算
-        let index = row * board.width + col;
+        // セルのインデックスを事前計算したキャッシュを使って計算（乗算を回避）
+        let index = row_offset_cache[row] + col;
         
         // 既に処理済みならスキップ - キャッシュヒット率を上げるため早めにチェック
         if !visited.insert(index) {
@@ -131,12 +145,13 @@ fn reveal_connected_cells_iterative(
         
         // 周囲のセルを取得して処理
         adjacent_buffer.clear(); // バッファを再利用
-        get_adjacent_cells_optimized(row, col, board.width, board.height, &mut adjacent_buffer);
+        get_adjacent_cells_cached(row, col, width, height, &row_offset_cache, &mut adjacent_buffer);
+        
+        // 隣接セルの一括処理の準備
+        let mut local_cells_to_enqueue = Vec::with_capacity(8);
         
         // 隣接セルの一括処理
-        for &(adj_row, adj_col) in &adjacent_buffer {
-            let adj_index = adj_row * board.width + adj_col;
-            
+        for &(adj_row, adj_col, adj_index) in &adjacent_buffer {
             // 既に処理済みならスキップ（早期チェック）
             if visited.contains(&adj_index) {
                 continue;
@@ -147,17 +162,24 @@ fn reveal_connected_cells_iterative(
                 continue;
             }
             
-            // セルを開く
-            board.revealed[adj_index] = true;
+            // セルを蓄積（バッチ処理用）
+            cells_to_reveal.push(adj_index);
             
-            // 残りの安全なセル数を減らす
-            board.remaining_safe_cells -= 1;
-            
-            // 周囲に地雷がない空のセルなら、そのセルも処理対象に追加
+            // 周囲に地雷がない空のセルなら、後でキューに追加するリストに加える
             if let CellValue::Empty(0) = board.cells[adj_index] {
-                queue.push_back((adj_row, adj_col));
+                local_cells_to_enqueue.push((adj_row, adj_col));
             }
         }
+        
+        // 一括で処理する
+        for &idx in &cells_to_reveal {
+            board.revealed[idx] = true;
+            board.remaining_safe_cells -= 1;
+        }
+        cells_to_reveal.clear();
+        
+        // バッチでキューに追加
+        queue.extend(local_cells_to_enqueue);
     }
     
     Ok(())
@@ -205,6 +227,73 @@ fn get_adjacent_cells_optimized(
         result.push((row + 1, col));
         if col_right {
             result.push((row + 1, col + 1));
+        }
+    }
+}
+
+/// インデックスキャッシュを使用した隣接セル探索
+pub fn get_adjacent_cells_cached(
+    row: usize, 
+    col: usize, 
+    width: usize, 
+    height: usize,
+    row_offset_cache: &[usize],
+    result: &mut Vec<(usize, usize, usize)> // (行, 列, インデックス)
+) {
+    // 範囲チェックを最小限にするため、範囲内にあることが明らかな場合は直接追加
+    let row_top = row > 0;
+    let row_bottom = row < height - 1;
+    let col_left = col > 0;
+    let col_right = col < width - 1;
+    
+    // 上段
+    if row_top {
+        let top_row = row - 1;
+        let top_row_offset = row_offset_cache[top_row];
+        
+        if col_left {
+            let idx = top_row_offset + (col - 1);
+            result.push((top_row, col - 1, idx));
+        }
+        
+        let idx = top_row_offset + col;
+        result.push((top_row, col, idx));
+        
+        if col_right {
+            let idx = top_row_offset + (col + 1);
+            result.push((top_row, col + 1, idx));
+        }
+    }
+    
+    // 中段
+    let current_row_offset = row_offset_cache[row];
+    
+    if col_left {
+        let idx = current_row_offset + (col - 1);
+        result.push((row, col - 1, idx));
+    }
+    
+    if col_right {
+        let idx = current_row_offset + (col + 1);
+        result.push((row, col + 1, idx));
+    }
+    
+    // 下段
+    if row_bottom {
+        let bottom_row = row + 1;
+        let bottom_row_offset = row_offset_cache[bottom_row];
+        
+        if col_left {
+            let idx = bottom_row_offset + (col - 1);
+            result.push((bottom_row, col - 1, idx));
+        }
+        
+        let idx = bottom_row_offset + col;
+        result.push((bottom_row, col, idx));
+        
+        if col_right {
+            let idx = bottom_row_offset + (col + 1);
+            result.push((bottom_row, col + 1, idx));
         }
     }
 }
