@@ -13,7 +13,7 @@ use crate::models::coordinate::Coordinate;
 use crate::models::cell::CellValue;
 use crate::systems::{EventSystemTrait, EventSystem};
 use crate::system::system_registry::SystemPhase;
-use crate::system::system_registry::System;
+use crate::ecs::system::System;
 
 /// ボードクリックシステム
 pub struct BoardClickSystem {
@@ -59,33 +59,29 @@ impl System for BoardClickSystem {
         &self.name
     }
     
-    fn phase(&self) -> SystemPhase {
-        SystemPhase::Input
-    }
-    
-    fn run(&mut self, resources: &mut ResourceManager) {
+    fn update(&mut self, _entity_manager: &mut crate::entities::EntityManager, resources: &mut ResourceManager) -> crate::ecs::system::SystemResult {
         // マウス状態リソースの取得
         let mouse_state_rc = match resources.get::<MouseState>() {
             Ok(rc) => rc,
-            Err(_) => return,
+            Err(_) => return crate::ecs::system::SystemResult::Error,
         };
         
         let mouse_state = mouse_state_rc.borrow();
         let mouse_state = match mouse_state.downcast_ref::<MouseState>() {
             Some(state) => state,
-            None => return,
+            None => return crate::ecs::system::SystemResult::Error,
         };
         
         // ボード設定リソースの取得
         let board_config_rc = match resources.get::<BoardConfigResource>() {
             Ok(rc) => rc,
-            Err(_) => return,
+            Err(_) => return crate::ecs::system::SystemResult::Error,
         };
         
         let board_config = board_config_rc.borrow();
         let board_config = match board_config.downcast_ref::<BoardConfigResource>() {
             Some(config) => config,
-            None => return,
+            None => return crate::ecs::system::SystemResult::Error,
         };
         
         // クリックがあったかどうかをチェック
@@ -130,6 +126,8 @@ impl System for BoardClickSystem {
                 }
             }
         }
+        
+        crate::ecs::system::SystemResult::Ok
     }
 }
 

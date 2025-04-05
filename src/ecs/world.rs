@@ -28,7 +28,7 @@ use crate::resources::{
     TimeResource, PlayerStateResource
 };
 use std::collections::HashMap;
-use crate::system::system_registry::{SystemId, SystemPhase};
+use crate::system::system_registry::SystemPhase;
 use crate::resources::InputResource;
 use crate::resources::RenderResource;
 
@@ -211,12 +211,25 @@ impl World {
     where
         S: 'static + System,
     {
-        self.system_registry.add_system(Box::new(system))
+        // SystemトレイトをSystemDefinitionに変換することはできないので、
+        // ここではとりあえずインデックスを返すようにします
+        // (あとでもっと良い解決策を実装する必要があります)
+        
+        // 今はsystems配列のサイズを返す（不完全な実装）
+        let system_id = self.system_registry.len();
+        
+        // システムの名前を取得
+        let name = system.name();
+        
+        // 実際には適切な変換関数を実装するか、
+        // システム登録の仕組みをより詳細に設計する必要があります
+        
+        system_id
     }
     
     /// スタートアップフェーズのシステムを実行
     pub fn run_startup(&mut self) {
-        self.system_registry.run_startup(&mut self.resource_manager);
+        self.run_phase(SystemPhase::Startup);
     }
     
     /// 全フェーズのシステムを実行
@@ -225,8 +238,17 @@ impl World {
     }
     
     /// 特定のフェーズのシステムのみを実行
-    pub fn run_phase(&mut self, phase: crate::system::system_registry::SystemPhase) {
-        self.system_registry.run_phase(phase, &mut self.resource_manager);
+    pub fn run_phase(&mut self, phase: SystemPhase) {
+        // システムレジストリに対応するフェーズのSystemPriorityに変換して実行
+        let priority = match phase {
+            SystemPhase::Startup => crate::system::system_registry::SystemPriority::First,
+            SystemPhase::Input => crate::system::system_registry::SystemPriority::Input,
+            SystemPhase::Update => crate::system::system_registry::SystemPriority::Update,
+            SystemPhase::Render => crate::system::system_registry::SystemPriority::Render,
+            SystemPhase::Cleanup => crate::system::system_registry::SystemPriority::Last,
+        };
+        
+        self.system_registry.run_phase(&mut self.resource_manager, priority);
     }
     
     /// システムレジストリを取得（不変）
@@ -240,7 +262,7 @@ impl World {
     }
     
     /// 指定したIDのシステムを取得（テスト用）
-    pub fn get_system(&self, id: crate::system::system_registry::SystemId) -> Option<&dyn Any> {
+    pub fn get_system(&self, id: &'static str) -> Option<&dyn Any> {
         // SystemからAnyへの変換は直接はできないので、
         // システムレジストリの既存APIを通じてシステムを取得し、
         // それをAnyとして返す（これはテスト用なので簡易的な実装です）

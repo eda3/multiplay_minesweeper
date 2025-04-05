@@ -15,6 +15,7 @@ pub mod render_state;
 pub mod resource_manager;
 pub mod draw_options;
 pub mod event_bus_resource;
+pub mod typed_event_bus_resource;
 
 // リソースを再エクスポート
 pub use resource_trait::Resource;
@@ -27,6 +28,7 @@ pub use network_state::NetworkResource;
 pub use render_state::RenderResource;
 pub use draw_options::DrawOptions;
 pub use event_bus_resource::EventBusResource;
+pub use typed_event_bus_resource::TypedEventBusResource;
 
 // モデルをインポート
 // pub use board_state::{CellState, CellValue, Board, BoardConfig}; // board_state からは CellState, BoardConfig のみ使うか、正しいパスからインポート
@@ -62,7 +64,7 @@ pub use crate::resources::core_game::GameStateResource;
 
 // pub use time::DeltaTime; // time からは何も使わないか、正しいパスからインポート
 // pub use crate::resources::time_resource::DeltaTime; // time_resource にもない可能性
-pub use crate::systems::DeltaTime; // コンパイラ提案の systems からインポート
+pub use crate::systems::system_registry::DeltaTime; // コンパイラ提案の systems からインポート
 
 pub use input_resource::InputResource;
 pub use mouse_state::MouseState;
@@ -94,4 +96,9 @@ pub struct ResourceBatch<T: ?Sized + 'static> {
 /// リソースのバッチ処理のためのラッパー（読み書き可能）
 pub struct ResourceBatchMut<T: ?Sized + 'static> {
     pub resource: &'static mut T,
+}
+
+/// リソースシステムの初期化
+pub fn init() -> ResourceManager {
+    ResourceManager::new()
 } 

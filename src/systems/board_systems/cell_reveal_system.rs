@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::entities::EntityManager;
 use crate::entities::EntityId;
-use crate::systems::optimized::system_scheduler::DeltaTime;
+use crate::systems::system_registry::DeltaTime;
 use crate::resources::{
     BoardConfigResource,
     BoardStateResource,

@@ -10,7 +10,8 @@ use crate::events::board_events::{CellRevealedEvent, MultipleCellsRevealedEvent,
 use crate::events::game_events::{GameEndEvent, GameStateChangeEvent, GameState};
 use crate::models::cell::CellValue;
 use crate::systems::{EventSystemTrait, EventSystem};
-use crate::system::system_registry::{System, SystemPhase};
+use crate::ecs::system::System;
+use crate::system::system_registry::SystemPhase;
 use crate::board::Board;
 use wasm_bindgen::JsValue;
 
@@ -192,30 +193,26 @@ impl System for CellRevealHandlerSystem {
         &self.name
     }
     
-    fn phase(&self) -> SystemPhase {
-        SystemPhase::Update
-    }
-    
-    fn run(&mut self, resources: &mut ResourceManager) {
+    fn update(&mut self, _entity_manager: &mut crate::entities::EntityManager, resources: &mut ResourceManager) -> crate::ecs::system::SystemResult {
         // イベントハンドラの初期化
         self.initialize_handlers(resources);
         
         // ボードリソースの取得
         let board_rc = match resources.get::<BoardResource>() {
             Ok(rc) => rc,
-            Err(_) => return,
+            Err(_) => return crate::ecs::system::SystemResult::Error,
         };
         
         // イベントバスからCellRevealedEventをチェック
         let event_bus_rc = match resources.get::<EventBusResource>() {
             Ok(rc) => rc,
-            Err(_) => return,
+            Err(_) => return crate::ecs::system::SystemResult::Error,
         };
         
         let event_bus = event_bus_rc.borrow();
         let event_bus_res = match event_bus.downcast_ref::<EventBusResource>() {
             Some(res) => res,
-            None => return,
+            None => return crate::ecs::system::SystemResult::Error,
         };
         
         // CellRevealedEventに対応する直接の処理を行う
@@ -229,7 +226,7 @@ impl System for CellRevealHandlerSystem {
         let mut board = board_rc.borrow_mut();
         let board = match board.downcast_mut::<BoardResource>() {
             Some(board) => board,
-            None => return,
+            None => return crate::ecs::system::SystemResult::Error,
         };
         
         // イベント発行の例
@@ -238,6 +235,8 @@ impl System for CellRevealHandlerSystem {
         
         // マルチセル公開イベントが発生した場合の処理例
         // この部分は通常、イベントハンドラ内で行われる
+        
+        crate::ecs::system::SystemResult::Ok
     }
 }
 

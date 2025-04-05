@@ -8,7 +8,7 @@ pub mod world;
 
 pub use world::World;
 // システム関連のモジュールを再エクスポート
-pub use crate::system::{System, SystemRegistry, SystemPhase};
+pub use crate::system::{System, SystemRegistry, system_registry::SystemPhase};
 
 /**
  * ECSパターンの基本モジュール

@@ -1,26 +1,30 @@
 use wasm_bindgen::prelude::*;
-use crate::system::{SystemRegistry, SystemPhase};
+use crate::system::{SystemRegistry, system_registry::SystemPhase};
 use crate::resources::{
     ResourceManager, 
-    PlayerStateResource, 
-    GameStateResource,
+    GameStateResource, 
     TimeResource, 
+    PlayerStateResource,
     GameConfigResource,
-    BoardStateResource,
     BoardConfigResource,
-    GamePhase,
-    Resource
+    BoardStateResource,
+    EventQueueResource,
+    Resource,
+    core_game::GamePhase
 };
-use crate::ecs::World;
+use crate::ecs::world::World;
 use crate::resources::{
     BoardResource,
+    RenderResource,
+    InputResource
 };
-use crate::systems::input;
-use crate::ecs_game::input::GameplayInputSystem;
-use crate::ecs_game::input::UIInputSystem;
-use crate::system::System;
-use crate::systems::InputCollectionSystem;
-use crate::systems::InputProcessingSystem;
+use crate::ecs::system::System;
+use std::time::Duration;
+
+use crate::components::Position;
+use crate::entities::EntityManager;
+use crate::resources::BoardConfig;
+use crate::systems::board_systems::CellRevealHandlerSystem;
 
 /// ECSベースのゲームエンジン
 /// リソースとシステムを管理し、ゲームループを実行する
@@ -75,29 +79,14 @@ impl EcsGame {
 
     /// 入力システムを登録
     fn register_input_systems(&mut self) {
-        input::register_input_systems(self.world.systems_mut());
+        // input::register_input_systems(self.world.systems_mut());
     }
 
     /// システムを登録する
     fn register_systems(&mut self) {
-        let mut input_collection = InputCollectionSystem::new();
-        let mut input_processing = InputProcessingSystem::new();
-        let mut ui_input = UIInputSystem::new();
-        let mut gameplay_input = GameplayInputSystem::new();
-        
-        // システムの登録
-        let collection_id = self.world.add_system(input_collection);
-        let processing_id = self.world.add_system(input_processing);
-        
-        // UIInputSystemを登録し、依存関係を設定
-        let mut ui_input_system = UIInputSystem::new();
-        ui_input_system.set_dependency(processing_id);
-        let ui_input_id = self.world.add_system(ui_input_system);
-        
-        // GameplayInputSystemを登録し、依存関係を設定
-        let mut gameplay_input_system = GameplayInputSystem::new();
-        gameplay_input_system.set_dependency(ui_input_id);
-        self.world.add_system(gameplay_input_system);
+        // セル公開ハンドラシステムを登録
+        let cell_reveal_handler = CellRevealHandlerSystem::new();
+        self.world.add_system(cell_reveal_handler);
         
         // その他のシステムも登録
         // ... existing code ...
@@ -106,7 +95,7 @@ impl EcsGame {
     /// システムを追加
     pub fn add_system<S>(&mut self, system: S) -> usize
     where
-        S: 'static + crate::system::System,
+        S: 'static + crate::ecs::system::System,
     {
         self.world.add_system(system)
     }
@@ -209,20 +198,16 @@ mod tests {
     struct TestSystem {
         name: String,
         run_count: usize,
-        phase: SystemPhase,
     }
 
-    impl crate::system::System for TestSystem {
+    impl crate::ecs::system::System for TestSystem {
         fn name(&self) -> &str {
             &self.name
         }
 
-        fn phase(&self) -> SystemPhase {
-            self.phase
-        }
-
-        fn run(&mut self, _resources: &mut ResourceManager) {
+        fn update(&mut self, _entity_manager: &mut EntityManager, _resources: &mut ResourceManager) -> crate::ecs::system::SystemResult {
             self.run_count += 1;
+            crate::ecs::system::SystemResult::Ok
         }
     }
 
@@ -249,7 +234,6 @@ mod tests {
         let update_system = TestSystem {
             name: "UpdateSystem".to_string(),
             run_count: 0,
-            phase: SystemPhase::Update,
         };
         
         let system_id = game.add_system(update_system);
@@ -292,19 +276,16 @@ mod tests {
         let input_system = TestSystem {
             name: "InputSystem".to_string(),
             run_count: 0,
-            phase: SystemPhase::Input,
         };
         
         let update_system = TestSystem {
             name: "UpdateSystem".to_string(),
             run_count: 0,
-            phase: SystemPhase::Update,
         };
         
         let render_system = TestSystem {
             name: "RenderSystem".to_string(),
             run_count: 0,
-            phase: SystemPhase::Render,
         };
         
         game.add_system(input_system);

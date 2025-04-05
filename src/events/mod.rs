@@ -12,6 +12,9 @@ pub mod game_events;
 pub mod board_events;
 pub mod input_events;
 pub mod network_events;
+pub mod typed_event;     // 新しい型安全なイベントトレイト
+pub mod typed_handler;   // 新しい型安全なハンドラ
+pub mod typed_event_bus; // 新しい型安全なイベントバス
 
 #[cfg(test)]
 mod tests;
@@ -20,6 +23,11 @@ mod tests;
 pub use event_trait::Event;
 pub use event_handler::{EventHandler, EventHandlerFn};
 pub use event_bus::EventBus;
+
+// 型安全なコンポーネントの再エクスポート
+pub use typed_event::{TypedEvent, HandlerId, TypedEventId};
+pub use typed_handler::{TypedEventHandler, TypedHandlerCollection};
+pub use typed_event_bus::TypedEventBus;
 
 // 各種イベント型の再エクスポート
 pub use game_events::*;
@@ -115,4 +123,9 @@ impl EventData {
 /// イベントシステムの初期化関数
 pub fn init() -> EventBus {
     EventBus::new()
+}
+
+/// 型安全なイベントシステムの初期化関数
+pub fn init_typed() -> TypedEventBus {
+    TypedEventBus::new()
 } 
