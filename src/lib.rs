@@ -304,4 +304,16 @@ fn setup_event_listeners(canvas_id: &str) -> Result<(), JsValue> {
 #[cfg(test)]
 mod tests {
     // テストケースをここに書く
+}
+
+// Event実装マクロの定義
+#[macro_export]
+macro_rules! impl_event {
+    ($event_type:ty, $event_name:expr) => {
+        impl Event for $event_type {
+            fn name(&self) -> &'static str {
+                $event_name
+            }
+        }
+    };
 } 
