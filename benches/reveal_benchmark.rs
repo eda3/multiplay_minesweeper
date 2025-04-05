@@ -922,19 +922,31 @@ fn test_index_caching_optimization() {
     println!("===== インデックスキャッシュ最適化テスト完了 =====");
 }
 
-// テスト用の関数 - bench_reveal_cellをより最適化したバージョン
+/// テスト用の最適化されたセル公開処理
 fn optimized_reveal_cell(
     row: usize,
     col: usize,
     board: &mut Board,
     is_first_click: bool
 ) -> Result<bool, JsValue> {
+    // ゲームオーバーや勝利状態では何もしない
+    if board.game_over || board.win {
+        return Ok(false);
+    }
+
     // インデックスを計算
     let index = row * board.width + col;
     
     // 既に開いているセルや旗が立てられているセルは無視
     if board.revealed[index] || board.flagged[index] {
         return Ok(false);
+    }
+
+    // 最初のクリックの場合、地雷を再配置
+    if is_first_click {
+        // 最初のクリックでは地雷に当たらないようにする
+        board.initialize();
+        board.first_click = false;
     }
 
     // セルを開く
@@ -952,555 +964,15 @@ fn optimized_reveal_cell(
 
     // 周囲の地雷がない場合は周囲のセルも開く
     if let CellValue::Empty(0) = board.cells[index] {
-        // より最適化された非再帰実装を使用
         reveal_connected_cells_optimized(row, col, board)?;
     }
 
     // 勝利条件をチェック
-    let win = check_win_condition(board);
-    if win {
+    if check_win_condition(board) {
         board.win = true;
     }
 
     Ok(false) // 爆発しなかったのでfalseを返す
-}
-
-// エッジケーステスト用関数 - 極小ボード
-#[test]
-fn test_edge_case_tiny_boards() {
-    println!("===== 極小ボードエッジケーステスト =====");
-    
-    // 極小ボードのサイズ設定
-    let configs = [
-        (1, 1, 0),    // 1x1ボード、地雷なし
-        (2, 2, 1),    // 2x2ボード、地雷1個
-        (3, 3, 0),    // 3x3ボード、地雷なし (全部零セル)
-        (3, 3, 8),    // 3x3ボード、地雷多数 (ほぼ全部地雷)
-    ];
-    
-    println!("| ボードサイズ | 地雷数 | 非再帰結果 | 再帰結果 | 公開セル数 |");
-    println!("|------------|-------|--------|--------|--------|");
-    
-    for (width, height, mines) in configs {
-        println!("テスト: {}x{} ボード ({} 地雷)", width, height, mines);
-        
-        // 非再帰アルゴリズム
-        let iterative_revealed;
-        {
-            let mut board = Board::new(width, height, mines, 30.0);
-            let mut entity_manager = EntityManager::new();
-            
-            // 地雷を配置
-            for i in 0..mines {
-                if i < width * height {
-                    board.cells[i] = CellValue::Mine;
-                }
-            }
-            
-            // 数字を計算
-            calculate_numbers(&mut board);
-            
-            // 中央のセル（または左上）を開く
-            let start_row = if height > 1 { height / 2 } else { 0 };
-            let start_col = if width > 1 { width / 2 } else { 0 };
-            
-            // 非再帰アルゴリズムでセルを開く
-            let start = std::time::Instant::now();
-            let result = bench_reveal_cell(start_row, start_col, &mut entity_manager, &mut board, false);
-            let duration = start.elapsed();
-            
-            let revealed = board.revealed.iter().filter(|&&r| r).count();
-            iterative_revealed = revealed;
-            
-            println!("  非再帰: {}us, 公開セル数: {}, 結果: {:?}", 
-                duration.as_micros(), revealed, result);
-            
-            // ボード状態を表示（デバッグ用）
-            print_board_state(&board);
-        }
-        
-        // 再帰アルゴリズム
-        let recursive_revealed;
-        {
-            let mut board = Board::new(width, height, mines, 30.0);
-            
-            // 地雷を配置
-            for i in 0..mines {
-                if i < width * height {
-                    board.cells[i] = CellValue::Mine;
-                }
-            }
-            
-            // 数字を計算
-            calculate_numbers(&mut board);
-            
-            // 中央のセル（または左上）を開く
-            let start_row = if height > 1 { height / 2 } else { 0 };
-            let start_col = if width > 1 { width / 2 } else { 0 };
-            
-            // 再帰アルゴリズムでセルを開く
-            let start = std::time::Instant::now();
-            let mut visited = vec![false; width * height];
-            reveal_connected_recursive(start_row, start_col, &mut board, &mut visited);
-            let duration = start.elapsed();
-            
-            let revealed = board.revealed.iter().filter(|&&r| r).count();
-            recursive_revealed = revealed;
-            
-            println!("  再帰: {}us, 公開セル数: {}", 
-                duration.as_micros(), revealed);
-            
-            // ボード状態を表示（デバッグ用）
-            print_board_state(&board);
-        }
-        
-        println!("| {}x{} | {} | OK | OK | {} |", 
-            width, height, mines, iterative_revealed);
-        
-        // 結果が同じであることを確認
-        assert_eq!(iterative_revealed, recursive_revealed, 
-            "{}x{} ボードでの公開セル数が一致しません", width, height);
-            
-        println!(""); // 空行
-    }
-    
-    println!("===== 極小ボードエッジケーステスト 完了 =====");
-}
-
-// エッジケーステスト用関数 - 零セルの極端なパターン
-#[test]
-fn test_edge_case_zero_cells() {
-    println!("===== 零セル極端パターンテスト =====");
-    
-    // 零セルが極端に多い/少ないボードの設定
-    let configs = [
-        (10, 10, 0),    // 全て零セル
-        (10, 10, 99),   // 零セルなし（ほぼ全て地雷）
-        (10, 10, 30),   // 30%地雷（平均的）
-        (10, 10, 24),   // クロスパターンの地雷配置（十字に地雷）
-    ];
-    
-    println!("| ボードタイプ | 地雷数 | 非再帰結果 | 再帰結果 | 公開セル数 |");
-    println!("|------------|-------|--------|--------|--------|");
-    
-    for (i, (width, height, mines)) in configs.iter().enumerate() {
-        let board_type = match i {
-            0 => "全て零セル",
-            1 => "零セルなし",
-            2 => "平均的",
-            3 => "クロスパターン",
-            _ => "その他",
-        };
-        
-        println!("テスト: {}x{} ボード - {} ({} 地雷)", width, height, board_type, mines);
-        
-        // 非再帰アルゴリズム
-        let iterative_revealed;
-        {
-            let mut board = Board::new(*width, *height, *mines, 30.0);
-            let mut entity_manager = EntityManager::new();
-            
-            // 地雷を特殊パターンで配置
-            if i == 3 { // クロスパターン
-                setup_cross_pattern_mines(&mut board);
-            } else {
-                // 通常配置
-                for i in 0..*mines {
-                    if i < *width * *height {
-                        board.cells[i] = CellValue::Mine;
-                    }
-                }
-            }
-            
-            // 数字を計算
-            calculate_numbers(&mut board);
-            
-            // 中央のセルを開く
-            let start_row = height / 2;
-            let start_col = width / 2;
-            
-            // 非再帰アルゴリズムでセルを開く
-            let start = std::time::Instant::now();
-            let result = bench_reveal_cell(start_row, start_col, &mut entity_manager, &mut board, false);
-            let duration = start.elapsed();
-            
-            let revealed = board.revealed.iter().filter(|&&r| r).count();
-            iterative_revealed = revealed;
-            
-            println!("  非再帰: {}us, 公開セル数: {}, 結果: {:?}", 
-                duration.as_micros(), revealed, result);
-            
-            // ボード状態を表示（デバッグ用）
-            print_board_state(&board);
-        }
-        
-        // 再帰アルゴリズム
-        let recursive_revealed;
-        {
-            let mut board = Board::new(*width, *height, *mines, 30.0);
-            
-            // 地雷を特殊パターンで配置
-            if i == 3 { // クロスパターン
-                setup_cross_pattern_mines(&mut board);
-            } else {
-                // 通常配置
-                for i in 0..*mines {
-                    if i < *width * *height {
-                        board.cells[i] = CellValue::Mine;
-                    }
-                }
-            }
-            
-            // 数字を計算
-            calculate_numbers(&mut board);
-            
-            // 中央のセルを開く
-            let start_row = height / 2;
-            let start_col = width / 2;
-            
-            // 再帰アルゴリズムでセルを開く
-            let start = std::time::Instant::now();
-            let mut visited = vec![false; *width * *height];
-            reveal_connected_recursive(start_row, start_col, &mut board, &mut visited);
-            let duration = start.elapsed();
-            
-            let revealed = board.revealed.iter().filter(|&&r| r).count();
-            recursive_revealed = revealed;
-            
-            println!("  再帰: {}us, 公開セル数: {}", 
-                duration.as_micros(), revealed);
-            
-            // ボード状態を表示（デバッグ用）
-            print_board_state(&board);
-        }
-        
-        println!("| {} | {} | OK | OK | {} |", 
-            board_type, mines, iterative_revealed);
-        
-        // 結果が同じであることを確認
-        assert_eq!(iterative_revealed, recursive_revealed, 
-            "{}パターンでの公開セル数が一致しません", board_type);
-            
-        println!(""); // 空行
-    }
-    
-    println!("===== 零セル極端パターンテスト 完了 =====");
-}
-
-// 十字パターンの地雷配置をセットアップ
-fn setup_cross_pattern_mines(board: &mut Board) {
-    let width = board.width;
-    let height = board.height;
-    
-    // 横線と縦線に地雷を配置
-    let mid_row = height / 2;
-    let mid_col = width / 2;
-    
-    for col in 0..width {
-        let idx = mid_row * width + col;
-        board.cells[idx] = CellValue::Mine;
-    }
-    
-    for row in 0..height {
-        let idx = row * width + mid_col;
-        board.cells[idx] = CellValue::Mine;
-    }
-    
-    // 中央だけ地雷なし（クリック位置にする）
-    let center_idx = mid_row * width + mid_col;
-    board.cells[center_idx] = CellValue::Empty(0);
-}
-
-// ボード状態の表示（デバッグ用）
-fn print_board_state(board: &Board) {
-    if board.width > 10 || board.height > 10 {
-        println!("  ボードが大きすぎるため表示をスキップ");
-        return;
-    }
-    
-    println!("  ボード状態:");
-    for row in 0..board.height {
-        print!("  ");
-        for col in 0..board.width {
-            let idx = row * board.width + col;
-            let revealed = board.revealed[idx];
-            let cell = match &board.cells[idx] {
-                CellValue::Empty(0) => if revealed { "□" } else { "■" },
-                CellValue::Empty(n) => if revealed { &n.to_string() } else { "■" },
-                CellValue::Mine => if revealed { "※" } else { "■" },
-            };
-            print!("{} ", cell);
-        }
-        println!();
-    }
-}
-
-// エッジケーステスト用関数 - 非対称形状と偏った地雷配置
-#[test]
-fn test_edge_case_asymmetric_boards() {
-    println!("===== 非対称形状・偏った地雷配置テスト =====");
-    
-    // 非対称形状のボード設定
-    let configs = [
-        (20, 5, 10, "横長ボード"),     // 横長ボード
-        (5, 20, 10, "縦長ボード"),     // 縦長ボード
-        (10, 10, 20, "角に偏った地雷"), // 角に偏った地雷
-        (10, 10, 20, "端に偏った地雷"), // 端に偏った地雷
-    ];
-    
-    println!("| ボードタイプ | サイズ | 非再帰結果 | 再帰結果 | 公開セル数 |");
-    println!("|------------|-------|--------|--------|--------|");
-    
-    for (i, (width, height, mines, board_type)) in configs.iter().enumerate() {
-        println!("テスト: {}x{} ボード - {} ({} 地雷)", width, height, board_type, mines);
-        
-        // 非再帰アルゴリズム
-        let iterative_revealed;
-        {
-            let mut board = Board::new(*width, *height, *mines, 30.0);
-            let mut entity_manager = EntityManager::new();
-            
-            // 特殊な地雷配置
-            match i {
-                2 => setup_corner_mines(&mut board, *mines), // 角に偏った地雷
-                3 => setup_edge_mines(&mut board, *mines),   // 端に偏った地雷
-                _ => {
-                    // 通常配置（先頭から順に）
-                    for i in 0..*mines {
-                        if i < *width * *height {
-                            board.cells[i] = CellValue::Mine;
-                        }
-                    }
-                }
-            }
-            
-            // 数字を計算
-            calculate_numbers(&mut board);
-            
-            // 中央付近のセルを開く（特殊ケースでは異なる位置）
-            let start_row;
-            let start_col;
-            
-            match i {
-                2 => { // 角に偏った地雷の場合は中央を開く
-                    start_row = height / 2;
-                    start_col = width / 2;
-                },
-                3 => { // 端に偏った地雷の場合は中央を開く
-                    start_row = height / 2;
-                    start_col = width / 2;
-                },
-                _ => { // それ以外は中央付近の安全なセルを開く
-                    start_row = height / 2;
-                    start_col = width / 2;
-                }
-            }
-            
-            // 非再帰アルゴリズムでセルを開く
-            let start = std::time::Instant::now();
-            let result = bench_reveal_cell(start_row, start_col, &mut entity_manager, &mut board, false);
-            let duration = start.elapsed();
-            
-            let revealed = board.revealed.iter().filter(|&&r| r).count();
-            iterative_revealed = revealed;
-            
-            println!("  非再帰: {}us, 公開セル数: {}, 結果: {:?}", 
-                duration.as_micros(), revealed, result);
-                
-            // 簡易的なボード表示
-            if *width <= 10 && *height <= 10 {
-                print_board_state(&board);
-            } else {
-                println!("  ボードが大きいため表示省略");
-            }
-        }
-        
-        // 再帰アルゴリズム
-        let recursive_revealed;
-        {
-            let mut board = Board::new(*width, *height, *mines, 30.0);
-            
-            // 特殊な地雷配置
-            match i {
-                2 => setup_corner_mines(&mut board, *mines), // 角に偏った地雷
-                3 => setup_edge_mines(&mut board, *mines),   // 端に偏った地雷
-                _ => {
-                    // 通常配置（先頭から順に）
-                    for i in 0..*mines {
-                        if i < *width * *height {
-                            board.cells[i] = CellValue::Mine;
-                        }
-                    }
-                }
-            }
-            
-            // 数字を計算
-            calculate_numbers(&mut board);
-            
-            // 中央付近のセルを開く（特殊ケースでは異なる位置）
-            let start_row;
-            let start_col;
-            
-            match i {
-                2 => { // 角に偏った地雷の場合は中央を開く
-                    start_row = height / 2;
-                    start_col = width / 2;
-                },
-                3 => { // 端に偏った地雷の場合は中央を開く
-                    start_row = height / 2;
-                    start_col = width / 2;
-                },
-                _ => { // それ以外は中央付近の安全なセルを開く
-                    start_row = height / 2;
-                    start_col = width / 2;
-                }
-            }
-            
-            // 再帰アルゴリズムでセルを開く
-            let start = std::time::Instant::now();
-            let mut visited = vec![false; *width * *height];
-            reveal_connected_recursive(start_row, start_col, &mut board, &mut visited);
-            let duration = start.elapsed();
-            
-            let revealed = board.revealed.iter().filter(|&&r| r).count();
-            recursive_revealed = revealed;
-            
-            println!("  再帰: {}us, 公開セル数: {}", 
-                duration.as_micros(), revealed);
-            
-            // 簡易的なボード表示は省略
-        }
-        
-        println!("| {} | {}x{} | OK | OK | {} |", 
-            board_type, width, height, iterative_revealed);
-        
-        // 結果が同じであることを確認
-        assert_eq!(iterative_revealed, recursive_revealed, 
-            "{}での公開セル数が一致しません", board_type);
-            
-        println!(""); // 空行
-    }
-    
-    println!("===== 非対称形状・偏った地雷配置テスト 完了 =====");
-}
-
-// 角に偏った地雷を配置
-fn setup_corner_mines(board: &mut Board, mine_count: usize) {
-    let width = board.width;
-    let height = board.height;
-    let total_cells = width * height;
-    let mut mines_placed = 0;
-    
-    // 角の位置
-    let corners = [
-        0,                    // 左上
-        width - 1,            // 右上
-        (height - 1) * width, // 左下
-        total_cells - 1       // 右下
-    ];
-    
-    // 各角とその周囲に地雷を配置
-    for &corner in &corners {
-        let (row, col) = (corner / width, corner % width);
-        
-        // 角から3x3の範囲（または端までの範囲）に地雷を配置
-        for dr in -1..=1 {
-            for dc in -1..=1 {
-                let new_row = row as isize + dr;
-                let new_col = col as isize + dc;
-                
-                // ボード内かチェック
-                if new_row >= 0 && new_row < height as isize &&
-                   new_col >= 0 && new_col < width as isize {
-                    let idx = new_row as usize * width + new_col as usize;
-                    board.cells[idx] = CellValue::Mine;
-                    mines_placed += 1;
-                    
-                    // 指定された地雷数に達したら終了
-                    if mines_placed >= mine_count {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-    
-    // 指定した地雷数に満たない場合は、追加で地雷を配置
-    while mines_placed < mine_count && mines_placed < total_cells {
-        let idx = mines_placed % total_cells;
-        if let CellValue::Empty(_) = board.cells[idx] {
-            board.cells[idx] = CellValue::Mine;
-            mines_placed += 1;
-        } else {
-            mines_placed += 1; // すでに地雷がある場合はスキップ
-        }
-    }
-}
-
-// 端に偏った地雷を配置
-fn setup_edge_mines(board: &mut Board, mine_count: usize) {
-    let width = board.width;
-    let height = board.height;
-    let total_cells = width * height;
-    let mut mines_placed = 0;
-    
-    // 上下左右の端に地雷を配置
-    
-    // 上端
-    for col in 0..width {
-        if mines_placed >= mine_count {
-            return;
-        }
-        board.cells[col] = CellValue::Mine;
-        mines_placed += 1;
-    }
-    
-    // 下端
-    for col in 0..width {
-        if mines_placed >= mine_count {
-            return;
-        }
-        let idx = (height - 1) * width + col;
-        board.cells[idx] = CellValue::Mine;
-        mines_placed += 1;
-    }
-    
-    // 左端（上下の角は除く）
-    for row in 1..(height - 1) {
-        if mines_placed >= mine_count {
-            return;
-        }
-        let idx = row * width;
-        board.cells[idx] = CellValue::Mine;
-        mines_placed += 1;
-    }
-    
-    // 右端（上下の角は除く）
-    for row in 1..(height - 1) {
-        if mines_placed >= mine_count {
-            return;
-        }
-        let idx = row * width + (width - 1);
-        board.cells[idx] = CellValue::Mine;
-        mines_placed += 1;
-    }
-    
-    // 指定した地雷数に満たない場合は、追加で地雷を配置
-    let mut idx = 0;
-    while mines_placed < mine_count && mines_placed < total_cells {
-        // 端ではない内部セルを探す
-        let row = idx / width;
-        let col = idx % width;
-        
-        if row > 0 && row < height - 1 && col > 0 && col < width - 1 {
-            if let CellValue::Empty(_) = board.cells[idx] {
-                board.cells[idx] = CellValue::Mine;
-                mines_placed += 1;
-            }
-        }
-        
-        idx = (idx + 1) % total_cells;
-    }
 }
 
 /// インデックス計算のキャッシングを行う最適化バージョン
@@ -1640,4 +1112,608 @@ fn get_adjacent_cells_cached(
             result.push((bottom_row, col + 1, idx));
         }
     }
+}
+
+// エッジケーステスト用関数 - 極小ボード
+#[bench]
+fn test_edge_case_tiny_boards(b: &mut Bencher) {
+    b.iter(|| {
+        println!("===== 極小ボードエッジケーステスト =====");
+        
+        // 極小ボードのサイズ設定
+        let configs = [
+            (1, 1, 0),    // 1x1ボード、地雷なし
+            (2, 2, 1),    // 2x2ボード、地雷1個
+            (3, 3, 0),    // 3x3ボード、地雷なし (全部零セル)
+            (3, 3, 8),    // 3x3ボード、地雷多数 (ほぼ全部地雷)
+        ];
+        
+        println!("| ボードサイズ | 地雷数 | 非再帰結果 | 再帰結果 | 公開セル数 |");
+        println!("|------------|-------|--------|--------|--------|");
+        
+        for (width, height, mines) in configs {
+            println!("テスト: {}x{} ボード ({} 地雷)", width, height, mines);
+            
+            // 非再帰アルゴリズム
+            let iterative_revealed;
+            {
+                let mut board = Board::new(width, height, mines, 30.0);
+                let mut entity_manager = EntityManager::new();
+                
+                // 地雷を配置
+                for i in 0..mines {
+                    if i < width * height {
+                        board.cells[i] = CellValue::Mine;
+                    }
+                }
+                
+                // 数字を計算
+                calculate_numbers(&mut board);
+                
+                // 中央のセル（または左上）を開く
+                let start_row = if height > 1 { height / 2 } else { 0 };
+                let start_col = if width > 1 { width / 2 } else { 0 };
+                
+                // 非再帰アルゴリズムでセルを開く
+                let start = std::time::Instant::now();
+                let result = bench_reveal_cell(start_row, start_col, &mut entity_manager, &mut board, false);
+                let duration = start.elapsed();
+                
+                let revealed = board.revealed.iter().filter(|&&r| r).count();
+                iterative_revealed = revealed;
+                
+                println!("  非再帰: {}us, 公開セル数: {}, 結果: {:?}", 
+                    duration.as_micros(), revealed, result);
+                
+                // ボード状態を表示
+                print_board_state(&board);
+            }
+            
+            // 再帰アルゴリズム
+            let recursive_revealed;
+            {
+                let mut board = Board::new(width, height, mines, 30.0);
+                
+                // 地雷を配置
+                for i in 0..mines {
+                    if i < width * height {
+                        board.cells[i] = CellValue::Mine;
+                    }
+                }
+                
+                // 数字を計算
+                calculate_numbers(&mut board);
+                
+                // 中央のセル（または左上）を開く
+                let start_row = if height > 1 { height / 2 } else { 0 };
+                let start_col = if width > 1 { width / 2 } else { 0 };
+                
+                // 再帰アルゴリズムでセルを開く
+                let start = std::time::Instant::now();
+                let mut visited = vec![false; width * height];
+                reveal_connected_recursive(start_row, start_col, &mut board, &mut visited);
+                let duration = start.elapsed();
+                
+                let revealed = board.revealed.iter().filter(|&&r| r).count();
+                recursive_revealed = revealed;
+                
+                println!("  再帰: {}us, 公開セル数: {}", 
+                    duration.as_micros(), revealed);
+            }
+            
+            println!("| {}x{} | {} | OK | OK | {} |", 
+                width, height, mines, iterative_revealed);
+            
+            // 結果が同じであることを確認
+            assert_eq!(iterative_revealed, recursive_revealed, 
+                "{}x{} ボードでの公開セル数が一致しません", width, height);
+                
+            println!(""); // 空行
+        }
+        
+        println!("===== 極小ボードエッジケーステスト 完了 =====");
+    });
+}
+
+// エッジケーステスト用関数 - 零セルの極端なパターン
+#[bench]
+fn test_edge_case_zero_cells(b: &mut Bencher) {
+    b.iter(|| {
+        println!("===== 零セル極端パターンテスト =====");
+        
+        // 零セルが極端に多い/少ないボードの設定
+        let configs = [
+            (10, 10, 0),    // 全て零セル
+            (10, 10, 99),   // 零セルなし（ほぼ全て地雷）
+            (10, 10, 30),   // 30%地雷（平均的）
+            (10, 10, 24),   // クロスパターンの地雷配置（十字に地雷）
+        ];
+        
+        println!("| ボードタイプ | 地雷数 | 非再帰結果 | 再帰結果 | 公開セル数 |");
+        println!("|------------|-------|--------|--------|--------|");
+        
+        for (i, (width, height, mines)) in configs.iter().enumerate() {
+            let board_type = match i {
+                0 => "全て零セル",
+                1 => "零セルなし",
+                2 => "平均的",
+                3 => "クロスパターン",
+                _ => "その他",
+            };
+            
+            println!("テスト: {}x{} ボード - {} ({} 地雷)", width, height, board_type, mines);
+            
+            // 非再帰アルゴリズム
+            let iterative_revealed;
+            {
+                let mut board = Board::new(*width, *height, *mines, 30.0);
+                let mut entity_manager = EntityManager::new();
+                
+                // 地雷を特殊パターンで配置
+                if i == 3 { // クロスパターン
+                    setup_cross_pattern_mines(&mut board);
+                } else {
+                    // 通常配置
+                    for i in 0..*mines {
+                        if i < *width * *height {
+                            board.cells[i] = CellValue::Mine;
+                        }
+                    }
+                }
+                
+                // 数字を計算
+                calculate_numbers(&mut board);
+                
+                // 中央のセルを開く
+                let start_row = height / 2;
+                let start_col = width / 2;
+                
+                // 非再帰アルゴリズムでセルを開く
+                let start = std::time::Instant::now();
+                let result = bench_reveal_cell(start_row, start_col, &mut entity_manager, &mut board, false);
+                let duration = start.elapsed();
+                
+                let revealed = board.revealed.iter().filter(|&&r| r).count();
+                iterative_revealed = revealed;
+                
+                println!("  非再帰: {}us, 公開セル数: {}, 結果: {:?}", 
+                    duration.as_micros(), revealed, result);
+                
+                // ボード状態を表示
+                print_board_state(&board);
+            }
+            
+            // 再帰アルゴリズム
+            let recursive_revealed;
+            {
+                let mut board = Board::new(*width, *height, *mines, 30.0);
+                
+                // 地雷を特殊パターンで配置
+                if i == 3 { // クロスパターン
+                    setup_cross_pattern_mines(&mut board);
+                } else {
+                    // 通常配置
+                    for i in 0..*mines {
+                        if i < *width * *height {
+                            board.cells[i] = CellValue::Mine;
+                        }
+                    }
+                }
+                
+                // 数字を計算
+                calculate_numbers(&mut board);
+                
+                // 中央のセルを開く
+                let start_row = height / 2;
+                let start_col = width / 2;
+                
+                // 再帰アルゴリズムでセルを開く
+                let start = std::time::Instant::now();
+                let mut visited = vec![false; *width * *height];
+                reveal_connected_recursive(start_row, start_col, &mut board, &mut visited);
+                let duration = start.elapsed();
+                
+                let revealed = board.revealed.iter().filter(|&&r| r).count();
+                recursive_revealed = revealed;
+                
+                println!("  再帰: {}us, 公開セル数: {}", 
+                    duration.as_micros(), revealed);
+            }
+            
+            println!("| {} | {} | OK | OK | {} |", 
+                board_type, mines, iterative_revealed);
+            
+            // 結果が同じであることを確認
+            assert_eq!(iterative_revealed, recursive_revealed, 
+                "{}での公開セル数が一致しません", board_type);
+                
+            println!(""); // 空行
+        }
+        
+        println!("===== 零セル極端パターンテスト 完了 =====");
+    });
+}
+
+/// エッジケーステスト用関数 - 複雑な地雷パターン
+#[bench]
+fn test_edge_case_complex_mine_patterns(b: &mut Bencher) {
+    b.iter(|| {
+        println!("===== 複雑な地雷パターンテスト =====");
+        
+        // 複雑な地雷パターンのボード設定
+        let configs = [
+            (8, 8, "スパイラルパターン"),
+            (8, 8, "チェッカーボードパターン"),
+            (10, 8, "横長チェッカーボード"),
+            (8, 10, "縦長スパイラル"),
+        ];
+        
+        println!("| ボードタイプ | サイズ | 非再帰結果 | 再帰結果 | 公開セル数 |");
+        println!("|------------|-------|--------|--------|--------|");
+        
+        for (i, (width, height, pattern_name)) in configs.iter().enumerate() {
+            println!("テスト: {}x{} ボード - {}", width, height, pattern_name);
+            
+            // 非再帰アルゴリズム
+            let iterative_revealed;
+            {
+                let mut board = Board::new(*width, *height, 0, 30.0); // 地雷数は後で設定
+                let mut entity_manager = EntityManager::new();
+                
+                // 特殊な地雷配置
+                match i {
+                    0 => setup_spiral_mines(&mut board),    // スパイラルパターン
+                    1 => setup_checkerboard_mines(&mut board), // チェッカーボードパターン
+                    2 => setup_checkerboard_mines(&mut board), // 横長チェッカーボード
+                    3 => setup_spiral_mines(&mut board),    // 縦長スパイラル
+                    _ => {}
+                }
+                
+                // 実際の地雷数をカウント
+                let mine_count = board.cells.iter().filter(|&&cell| {
+                    matches!(cell, CellValue::Mine)
+                }).count();
+                board.mine_count = mine_count;
+                
+                // 数字を計算
+                calculate_numbers(&mut board);
+                
+                // セーフなセル数を設定
+                board.remaining_safe_cells = width * height - mine_count;
+                
+                // 中央付近のセルを開く
+                let start_row = height / 2;
+                let start_col = width / 2;
+                
+                // 非再帰アルゴリズムでセルを開く
+                let start = std::time::Instant::now();
+                let result = bench_reveal_cell(start_row, start_col, &mut entity_manager, &mut board, false);
+                let duration = start.elapsed();
+                
+                let revealed = board.revealed.iter().filter(|&&r| r).count();
+                iterative_revealed = revealed;
+                
+                println!("  非再帰: {}us, 公開セル数: {}, 結果: {:?}", 
+                    duration.as_micros(), revealed, result);
+                    
+                // ボード状態を表示
+                print_board_state(&board);
+            }
+            
+            // 再帰アルゴリズム
+            let recursive_revealed;
+            {
+                let mut board = Board::new(*width, *height, 0, 30.0); // 地雷数は後で設定
+                
+                // 特殊な地雷配置
+                match i {
+                    0 => setup_spiral_mines(&mut board),    // スパイラルパターン
+                    1 => setup_checkerboard_mines(&mut board), // チェッカーボードパターン
+                    2 => setup_checkerboard_mines(&mut board), // 横長チェッカーボード
+                    3 => setup_spiral_mines(&mut board),    // 縦長スパイラル
+                    _ => {}
+                }
+                
+                // 実際の地雷数をカウント
+                let mine_count = board.cells.iter().filter(|&&cell| {
+                    matches!(cell, CellValue::Mine)
+                }).count();
+                board.mine_count = mine_count;
+                
+                // 数字を計算
+                calculate_numbers(&mut board);
+                
+                // セーフなセル数を設定
+                board.remaining_safe_cells = width * height - mine_count;
+                
+                // 中央付近のセルを開く
+                let start_row = height / 2;
+                let start_col = width / 2;
+                
+                // 再帰アルゴリズムでセルを開く
+                let start = std::time::Instant::now();
+                let mut visited = vec![false; *width * *height];
+                reveal_connected_recursive(start_row, start_col, &mut board, &mut visited);
+                let duration = start.elapsed();
+                
+                let revealed = board.revealed.iter().filter(|&&r| r).count();
+                recursive_revealed = revealed;
+                
+                println!("  再帰: {}us, 公開セル数: {}", 
+                    duration.as_micros(), revealed);
+            }
+            
+            println!("| {} | {}x{} | OK | OK | {} |", 
+                pattern_name, width, height, iterative_revealed);
+            
+            // 結果が同じであることを確認
+            assert_eq!(iterative_revealed, recursive_revealed, 
+                "{}での公開セル数が一致しません", pattern_name);
+                
+            println!(""); // 空行
+        }
+        
+        println!("===== 複雑な地雷パターンテスト 完了 =====");
+    });
+}
+
+/// スパイラル状に地雷を配置
+fn setup_spiral_mines(board: &mut Board) {
+    let width = board.width;
+    let height = board.height;
+    
+    // すべてのセルを空にリセット
+    for cell in board.cells.iter_mut() {
+        *cell = CellValue::Empty(0);
+    }
+    
+    let mut x: isize = 0;
+    let mut y: isize = 0;
+    let mut dx: isize = 1;
+    let mut dy: isize = 0;
+    let mut steps = width;
+    let mut step_change = 0;
+    
+    // 地雷の最大数（全体の約40%）
+    let max_mines = (width * height * 4) / 10;
+    let mut mines_placed = 0;
+    
+    // スパイラルパターンで地雷を配置
+    for _ in 0..(width * height) {
+        // 偶数位置にのみ地雷を配置（スパイラル上で交互に）
+        if (x + y) % 2 == 0 && mines_placed < max_mines && x >= 0 && y >= 0 && x < width as isize && y < height as isize {
+            let idx = (y as usize) * width + (x as usize);
+            board.cells[idx] = CellValue::Mine;
+            mines_placed += 1;
+        }
+        
+        // スパイラルの次の座標へ移動
+        x += dx;
+        y += dy;
+        
+        // ステップを減らし、必要に応じて方向を変更
+        steps -= 1;
+        if steps == 0 {
+            steps = match step_change {
+                0 | 2 => width - (step_change / 2 + 1),
+                1 | 3 => height - (step_change / 2 + 1),
+                _ => unreachable!()
+            };
+            
+            // 方向を変更: 右→下→左→上→右...
+            match (dx, dy) {
+                (1, 0) => { dx = 0; dy = 1; }  // 右から下へ
+                (0, 1) => { dx = -1; dy = 0; } // 下から左へ
+                (-1, 0) => { dx = 0; dy = -1; } // 左から上へ
+                (0, -1) => { dx = 1; dy = 0; } // 上から右へ
+                _ => unreachable!()
+            }
+            
+            step_change = (step_change + 1) % 4;
+        }
+        
+        // 境界外に出たらループを終了
+        if x < 0 || y < 0 || x >= width as isize || y >= height as isize {
+            break;
+        }
+    }
+}
+
+/// チェッカーボード（市松模様）状に地雷を配置
+fn setup_checkerboard_mines(board: &mut Board) {
+    let width = board.width;
+    let height = board.height;
+    
+    // すべてのセルを空にリセット
+    for cell in board.cells.iter_mut() {
+        *cell = CellValue::Empty(0);
+    }
+    
+    // 市松模様で地雷を配置
+    for y in 0..height {
+        for x in 0..width {
+            if (x + y) % 2 == 0 {
+                let idx = y * width + x;
+                board.cells[idx] = CellValue::Mine;
+            }
+        }
+    }
+}
+
+/// 最適なインデックスキャッシュを利用したキュー処理によって非再帰的にセルを公開する関数
+/// この実装は最終的な最適化バージョン
+#[test]
+fn test_optimized_reveal_performance() {
+    println!("===== 最適化されたセル公開アルゴリズム性能テスト =====");
+    
+    // 異なるボードサイズでのテスト
+    let configs = [
+        (10, 10, 10, "小さいボード"),
+        (16, 16, 40, "中サイズボード"),
+        (30, 16, 99, "大きいボード"),
+    ];
+    
+    println!("| ボードサイズ | 地雷数 | イテレーティブ実装 | インデックスキャッシュ実装 | 改善率 |");
+    println!("|------------|-------|--------------|-----------------|-------|");
+    
+    for (width, height, mines, board_type) in configs {
+        println!("テスト: {}x{} ボード - {} ({} 地雷)", width, height, board_type, mines);
+        
+        // 10回の実行の平均を取る
+        let iterations = 10;
+        let mut iterative_total = 0u128;
+        let mut optimized_total = 0u128;
+        
+        for _ in 0..iterations {
+            // 両方のテストで同じボード状態を使用するためのシード
+            let mut board_template = Board::new(width, height, mines, 30.0);
+            for i in 0..mines {
+                if i < width * height {
+                    board_template.cells[i] = CellValue::Mine;
+                }
+            }
+            calculate_numbers(&mut board_template);
+            
+            // 連鎖反応が起きる位置を探す
+            let reveal_pos = find_chain_reaction_position(&board_template);
+            
+            // 基本的なイテレーティブ実装
+            {
+                // ボードの状態をコピー
+                let mut board = board_template.clone();
+                let mut entity_manager = EntityManager::new();
+                
+                // イテレーティブな実装でセルを開く
+                let start = std::time::Instant::now();
+                let _ = reveal_connected_cells_iterative(reveal_pos.0, reveal_pos.1, &mut board);
+                let duration = start.elapsed();
+                
+                iterative_total += duration.as_nanos();
+            }
+            
+            // インデックスキャッシュ最適化実装
+            {
+                // ボードの状態をコピー
+                let mut board = board_template.clone();
+                
+                // 最適化された実装でセルを開く
+                let start = std::time::Instant::now();
+                let _ = optimized_reveal_cell(reveal_pos.0, reveal_pos.1, &mut board, false);
+                let duration = start.elapsed();
+                
+                optimized_total += duration.as_nanos();
+            }
+        }
+        
+        // 平均時間を計算
+        let iterative_avg = iterative_total / iterations as u128;
+        let optimized_avg = optimized_total / iterations as u128;
+        
+        // 改善率を計算
+        let improvement_pct = if iterative_avg > 0 {
+            (iterative_avg as f64 - optimized_avg as f64) / iterative_avg as f64 * 100.0
+        } else {
+            0.0
+        };
+        
+        println!("| {}x{} | {} | {}ns | {}ns | {:.1}% |", 
+            width, height, mines, iterative_avg, optimized_avg, improvement_pct);
+        
+        println!(""); // 空行
+    }
+    
+    println!("===== 最適化されたセル公開アルゴリズム性能テスト 完了 =====");
+}
+
+/// 連鎖反応が起きる位置を見つける
+fn find_chain_reaction_position(board: &Board) -> (usize, usize) {
+    // まず中央付近から探索
+    let mid_row = board.height / 2;
+    let mid_col = board.width / 2;
+    
+    // 中心から外側に螺旋状に探索
+    let mut radius: isize = 0;
+    while radius < (board.width.max(board.height) as isize) {
+        // 現在の半径の周囲を探索
+        for dr in -radius..=radius {
+            for dc in -radius..=radius {
+                // 周縁部のみをチェック
+                if dr.abs() == radius || dc.abs() == radius {
+                    let row_i = mid_row as isize + dr;
+                    let col_i = mid_col as isize + dc;
+                    
+                    // ボード範囲内かチェック
+                    if row_i >= 0 && col_i >= 0 && row_i < board.height as isize && col_i < board.width as isize {
+                        let row = row_i as usize;
+                        let col = col_i as usize;
+                        let idx = row * board.width + col;
+                        // 空のセル（周囲に地雷がない）を探す
+                        if let CellValue::Empty(0) = board.cells[idx] {
+                            return (row, col);
+                        }
+                    }
+                }
+            }
+        }
+        
+        radius += 1;
+    }
+    
+    // 見つからない場合はデフォルト位置
+    (mid_row, mid_col)
 } 
+
+/// ボード状態をコンソールに表示する関数
+fn print_board_state(board: &Board) {
+    let width = board.width;
+    let height = board.height;
+    
+    println!("ボード状態 ({}x{}):", width, height);
+    for y in 0..height {
+        let mut line = String::new();
+        for x in 0..width {
+            let idx = y * width + x;
+            let cell_char = match board.cells[idx] {
+                CellValue::Mine => if board.revealed[idx] { "💣" } else { "□" },
+                CellValue::Empty(n) => {
+                    if board.revealed[idx] {
+                        if n == 0 { "　" } else { &n.to_string() }
+                    } else {
+                        "□"
+                    }
+                }
+            };
+            line.push_str(cell_char);
+        }
+        println!("{}", line);
+    }
+    println!("");
+}
+
+/// クロス状に地雷を配置する関数
+fn setup_cross_pattern_mines(board: &mut Board) {
+    let width = board.width;
+    let height = board.height;
+    
+    // すべてのセルを空にリセット
+    for cell in board.cells.iter_mut() {
+        *cell = CellValue::Empty(0);
+    }
+    
+    // 水平方向の地雷配置
+    let mid_row = height / 2;
+    for x in 0..width {
+        let idx = mid_row * width + x;
+        board.cells[idx] = CellValue::Mine;
+    }
+    
+    // 垂直方向の地雷配置
+    let mid_col = width / 2;
+    for y in 0..height {
+        // 交差点の重複を避ける
+        if y != mid_row {
+            let idx = y * width + mid_col;
+            board.cells[idx] = CellValue::Mine;
+        }
+    }
+}
