@@ -31,6 +31,10 @@ use std::collections::HashMap;
 use crate::system::system_registry::SystemPhase;
 use crate::resources::InputResource;
 use crate::resources::RenderResource;
+use crate::resources::{
+    EventBusResource,
+    TypedEventBusResource
+};
 
 /// World構造体 - ECSの中心的なコンテナ
 #[derive(Debug)]
@@ -120,9 +124,43 @@ impl World {
         Some((a, b))
     }
     
+    /// 3つのリソースを一度に取得
+    pub fn get_resources3<A: Resource, B: Resource, C: Resource>(&self) -> Option<(&A, &B, &C)> {
+        let a = self.get_resource::<A>()?;
+        let b = self.get_resource::<B>()?;
+        let c = self.get_resource::<C>()?;
+        Some((a, b, c))
+    }
+    
     /// 複数のリソースを一度に取得（一部可変）
     pub fn get_resources_mut<A: Resource, B: Resource>(&mut self) -> Option<(&A, &mut B)> {
-        None
+        let a_ptr = match self.resource_manager.get::<A>() {
+            Ok(rc) => {
+                let borrowed = rc.borrow();
+                borrowed.downcast_ref::<A>()
+                    .map(|r| r as *const A)
+            }
+            Err(_) => None
+        }?;
+        
+        let b_ptr = match self.resource_manager.get_mut::<B>() {
+            Ok(rc) => {
+                let mut borrowed = rc.borrow_mut();
+                borrowed.downcast_mut::<B>()
+                    .map(|r| r as *mut B)
+            }
+            Err(_) => None
+        }?;
+        
+        // 安全性チェック：AとBが異なる型である必要がある
+        if std::any::TypeId::of::<A>() == std::any::TypeId::of::<B>() {
+            return None;
+        }
+        
+        // ポインタを安全に参照に変換
+        unsafe {
+            Some((&*a_ptr, &mut *b_ptr))
+        }
     }
     
     /// リソースマネージャーを取得（不変）
@@ -138,19 +176,29 @@ impl World {
     /// リソースバッチ処理（読み取り専用）
     pub fn with_resources<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&dyn Resource) -> R,
+        F: FnOnce(&ResourceBatch) -> R,
     {
-        let dummy = DummyResource{};
-        f(&dummy)
+        // リソースバッチを作成
+        let batch = ResourceBatch {
+            resources: &self.resource_manager
+        };
+        
+        // 関数に渡して実行
+        f(&batch)
     }
     
     /// リソースバッチ処理（読み書き）
     pub fn with_resources_mut<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(&mut dyn Resource) -> R,
+        F: FnOnce(&mut ResourceBatchMut) -> R,
     {
-        let mut dummy = DummyResource{};
-        f(&mut dummy)
+        // 可変リソースバッチを作成
+        let mut batch = ResourceBatchMut {
+            resources: &mut self.resource_manager
+        };
+        
+        // 関数に渡して実行
+        f(&mut batch)
     }
     
     /// 初期リソースを追加
@@ -162,7 +210,9 @@ impl World {
             GameConfigResource,
             BoardConfigResource,
             BoardStateResource,
-            EventQueueResource
+            EventQueueResource,
+            EventBusResource,
+            TypedEventBusResource
         };
         
         // コアゲームリソース → GameStateResourceに置き換え
@@ -198,6 +248,16 @@ impl World {
         // イベントキューリソース
         if !self.has_resource::<EventQueueResource>() {
             self.insert_resource(EventQueueResource::new());
+        }
+        
+        // イベントバスリソース
+        if !self.has_resource::<EventBusResource>() {
+            self.insert_resource(EventBusResource::new());
+        }
+        
+        // 型安全なイベントバスリソース
+        if !self.has_resource::<TypedEventBusResource>() {
+            self.insert_resource(TypedEventBusResource::new());
         }
         
         self.insert_resource(RenderResource::default());
@@ -312,6 +372,100 @@ impl World {
     
     pub fn get_resource_manager_mut(&mut self) -> &mut ResourceManager {
         &mut self.resource_manager
+    }
+    
+    /// 3つのリソースを一度に取得（1つのみ可変）
+    pub fn get_resources3_mut<A: Resource, B: Resource, C: Resource>(&mut self) -> Option<(&A, &B, &mut C)> {
+        // リソースの型IDを取得
+        let a_id = std::any::TypeId::of::<A>();
+        let b_id = std::any::TypeId::of::<B>();
+        let c_id = std::any::TypeId::of::<C>();
+        
+        // 同じ型が含まれていないかチェック
+        if a_id == b_id || a_id == c_id || b_id == c_id {
+            return None;
+        }
+        
+        // 各リソースを取得
+        let a_ptr = match self.resource_manager.get::<A>() {
+            Ok(rc) => {
+                let borrowed = rc.borrow();
+                borrowed.downcast_ref::<A>()
+                    .map(|r| r as *const A)
+            }
+            Err(_) => None
+        }?;
+        
+        let b_ptr = match self.resource_manager.get::<B>() {
+            Ok(rc) => {
+                let borrowed = rc.borrow();
+                borrowed.downcast_ref::<B>()
+                    .map(|r| r as *const B)
+            }
+            Err(_) => None
+        }?;
+        
+        let c_ptr = match self.resource_manager.get_mut::<C>() {
+            Ok(rc) => {
+                let mut borrowed = rc.borrow_mut();
+                borrowed.downcast_mut::<C>()
+                    .map(|r| r as *mut C)
+            }
+            Err(_) => None
+        }?;
+        
+        // ポインタを安全に参照に変換
+        unsafe {
+            Some((&*a_ptr, &*b_ptr, &mut *c_ptr))
+        }
+    }
+    
+    /// 3つのリソースを一度に取得（2つが可変）
+    pub fn get_resources3_mut2<A: Resource, B: Resource, C: Resource>(&mut self) -> Option<(&A, &mut B, &mut C)> {
+        // リソースの型IDを取得
+        let a_id = std::any::TypeId::of::<A>();
+        let b_id = std::any::TypeId::of::<B>();
+        let c_id = std::any::TypeId::of::<C>();
+        
+        // 同じ型が含まれていないかチェック
+        if a_id == b_id || a_id == c_id || b_id == c_id {
+            return None;
+        }
+        
+        // 各リソースを取得
+        let a_ptr = match self.resource_manager.get::<A>() {
+            Ok(rc) => {
+                let borrowed = rc.borrow();
+                borrowed.downcast_ref::<A>()
+                    .map(|r| r as *const A)
+            }
+            Err(_) => None
+        }?;
+        
+        // 可変リソースを取得
+        let b_ptr = match self.resource_manager.get_mut::<B>() {
+            Ok(rc) => {
+                let mut borrowed = rc.borrow_mut();
+                borrowed.downcast_mut::<B>()
+                    .map(|r| r as *mut B)
+            }
+            Err(_) => None
+        }?;
+        
+        // 可変リソースを取得
+        let c_ptr = match self.resource_manager.get_mut::<C>() {
+            Ok(rc) => {
+                let mut borrowed = rc.borrow_mut();
+                borrowed.downcast_mut::<C>()
+                    .map(|r| r as *mut C)
+            }
+            Err(_) => None
+        }?;
+        
+        // ポインタを安全に参照に変換
+        unsafe {
+            Some((&*a_ptr, &mut *b_ptr, &mut *c_ptr))
+        }
     }
 }
 

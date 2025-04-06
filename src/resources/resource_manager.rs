@@ -765,6 +765,45 @@ impl ResourceManager {
         
         Err(ResourceError::NotFound(type_name))
     }
+    
+    /// 複数のリソースを同時に取得（読み取り専用）
+    /// 
+    /// 異なる型の2つのリソースを同時に取得します。
+    /// 同じ型のリソースは取得できません（型安全性の確保のため）。
+    pub fn get_many<A: Resource, B: Resource>(&self) -> Option<(Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>)> {
+        let type_id_a = TypeId::of::<A>();
+        let type_id_b = TypeId::of::<B>();
+        
+        // 同じ型の場合はNoneを返す（型安全性のため）
+        if type_id_a == type_id_b {
+            return None;
+        }
+        
+        let a = self.resources.get(&type_id_a)?.resource.clone();
+        let b = self.resources.get(&type_id_b)?.resource.clone();
+        
+        Some((a, b))
+    }
+    
+    /// 複数のリソースを同時に取得（一部書き込み可能）
+    /// 
+    /// 異なる型の2つのリソースを同時に取得し、2つ目を可変として扱います。
+    /// 同じ型のリソースは取得できません（型安全性の確保のため）。
+    pub fn get_many_mut<A: Resource, B: Resource>(&self) -> Option<(Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>)> {
+        // 基本的には get_many と同じ実装ですが、
+        // 呼び出し側で片方を可変として扱う意図を示すためのメソッドです
+        self.get_many::<A, B>()
+    }
+    
+    /// 複数のリソースを同時に取得（すべて書き込み可能）
+    /// 
+    /// 異なる型の2つのリソースを同時に取得し、両方とも可変として扱います。
+    /// 同じ型のリソースは取得できません（型安全性の確保のため）。
+    pub fn get_many_mut_mut<A: Resource, B: Resource>(&self) -> Option<(Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>)> {
+        // 基本的には get_many と同じ実装ですが、
+        // 呼び出し側で両方を可変として扱う意図を示すためのメソッドです
+        self.get_many::<A, B>()
+    }
 }
 
 /// リソースバッチ - 複数のリソースに対する読み取り専用アクセス

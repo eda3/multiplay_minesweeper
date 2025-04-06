@@ -89,13 +89,53 @@ impl std::fmt::Display for ResourceError {
 }
 
 /// リソースのバッチ処理のためのラッパー（読み取り専用）
-pub struct ResourceBatch<T: ?Sized + 'static> {
-    pub resource: &'static T,
+pub struct ResourceBatch<'a> {
+    pub resources: &'a ResourceManager,
+}
+
+impl<'a> ResourceBatch<'a> {
+    /// 指定した型のリソースを取得
+    pub fn get<T: Resource>(&self) -> Option<&T> {
+        match self.resources.get::<T>() {
+            Ok(rc) => {
+                let borrowed = rc.borrow();
+                borrowed.downcast_ref::<T>()
+                    .map(|r| unsafe { std::mem::transmute::<&T, &T>(r) })
+            }
+            Err(_) => None
+        }
+    }
 }
 
 /// リソースのバッチ処理のためのラッパー（読み書き可能）
-pub struct ResourceBatchMut<T: ?Sized + 'static> {
-    pub resource: &'static mut T,
+pub struct ResourceBatchMut<'a> {
+    pub resources: &'a mut ResourceManager,
+}
+
+impl<'a> ResourceBatchMut<'a> {
+    /// 指定した型のリソースを取得（読み取り専用）
+    pub fn get<T: Resource>(&self) -> Option<&T> {
+        match self.resources.get::<T>() {
+            Ok(rc) => {
+                let borrowed = rc.borrow();
+                borrowed.downcast_ref::<T>()
+                    .map(|r| unsafe { std::mem::transmute::<&T, &T>(r) })
+            }
+            Err(_) => None
+        }
+    }
+    
+    /// 指定した型のリソースを取得（読み書き可能）
+    pub fn get_mut<T: Resource>(&mut self) -> Option<&mut T> {
+        match self.resources.get_mut::<T>() {
+            Ok(rc) => {
+                let mut borrowed = rc.borrow_mut();
+                borrowed.downcast_mut::<T>()
+                    .map(|r| unsafe { std::mem::transmute::<&mut T, &mut T>(r) })
+            }
+            Err(_) => None
+        }
+    }
 }
 
 /// リソースシステムの初期化
