@@ -13,6 +13,7 @@ use crate::impl_typed_event;
 use crate::impl_typed_event_with_conversion;
 use crate::models::cell::{CellState, CellValue};
 use crate::models::coordinate::Coordinate;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// セル状態変更イベント - セルの状態が変更されたことを表す
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,11 +66,13 @@ pub struct MultipleCellsRevealedEvent {
     pub is_chain: bool,
 }
 
-/// 地雷爆発イベント - 地雷が爆発したことを表す
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 地雷爆発イベント
+#[derive(Debug, Clone, PartialEq)]
 pub struct MineExplodedEvent {
     /// 爆発した地雷の座標
     pub coord: Coordinate,
+    /// ゲームオーバーになるかどうか
+    pub is_game_over: bool,
 }
 
 /// ボード初期化イベント - ボードが初期化されたことを表す

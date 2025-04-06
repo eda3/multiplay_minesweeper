@@ -9,6 +9,7 @@ pub mod system_registry;
 // pub mod system_manager; // 未実装
 pub mod event_system_trait;
 pub mod typed_event_system_trait; // 新しい型安全なイベントシステムトレイト
+pub mod base_event_system;
 
 // 機能別システムのサブモジュール
 pub mod board_systems;
@@ -37,6 +38,7 @@ pub use crate::ecs::system::System;
 // イベントシステムの再エクスポート
 pub use event_system_trait::{EventSystemTrait, EventSystem};
 pub use typed_event_system_trait::{TypedEventSystemTrait, TypedEventSystem}; // 型安全なイベントシステム
+pub use base_event_system::{BaseEventSystem, EventQueue, EventRequest, EventProcessingState};
 
 /**
  * システムの初期化関数

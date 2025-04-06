@@ -1,52 +1,49 @@
 /**
- * 型付きイベントバスリソース
+ * 型安全なイベントバスリソース
  * 
- * 型安全なイベントバスをECSリソースとして扱うためのラッパー。
- * リソースマネージャー経由でアクセス可能なイベントバスを提供。
+ * リソースとして使用できる型安全なイベントバス
+ * 依存解決を容易にし、システム間で共有できるようにする
  */
+use std::any::Any;
 use crate::events::typed_event::TypedEvent;
+use crate::events::typed_event_bus::{TypedEventBus, EventPriority};
 use crate::events::typed_handler::TypedEventHandler;
-use crate::events::typed_event_bus::TypedEventBus;
-use crate::events::EventData;
 
-/// 型付きイベントバスリソース - ECSリソースとしてのイベントバスラッパー
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TypedEventBusResource {
-    /// 内部のイベントバス
-    pub event_bus: TypedEventBus,
+    /// 型安全なイベントバス
+    event_bus: TypedEventBus,
 }
 
 impl TypedEventBusResource {
-    /// 新しいイベントバスリソースを作成
+    /// 新しい型安全なイベントバスリソースを作成
     pub fn new() -> Self {
         Self {
             event_bus: TypedEventBus::new(),
         }
     }
     
-    /// デバッグモードを設定したイベントバスリソースを作成
-    pub fn with_debug(debug: bool) -> Self {
-        Self {
-            event_bus: TypedEventBus::new().with_debug(debug),
-        }
+    /// イベントバスの参照を取得
+    pub fn get_event_bus(&self) -> &TypedEventBus {
+        &self.event_bus
     }
     
-    /// イベントを発行
-    pub fn publish<E: TypedEvent>(&self, event: E) {
-        self.event_bus.publish(event);
+    /// イベントバスの可変参照を取得
+    pub fn get_event_bus_mut(&mut self) -> &mut TypedEventBus {
+        &mut self.event_bus
+    }
+    
+    /// イベントバスをクリア（すべてのハンドラを削除）
+    pub fn clear_handlers(&mut self) {
+        self.event_bus.clear_handlers();
     }
     
     /// イベントを購読
     pub fn subscribe<E: TypedEvent, F>(&self, name: &str, handler: F) -> TypedEventHandler<E>
-    where
+    where 
         F: Fn(&E) + Send + Sync + 'static,
     {
         self.event_bus.subscribe(name, handler)
-    }
-    
-    /// イベントハンドラを登録
-    pub fn register_handler<E: TypedEvent>(&self, handler: TypedEventHandler<E>) {
-        self.event_bus.register_handler(handler);
     }
     
     /// イベントハンドラを削除
@@ -54,29 +51,42 @@ impl TypedEventBusResource {
         self.event_bus.unregister_handler::<E>(handler_id);
     }
     
-    /// イベント履歴を取得
-    pub fn get_history(&self) -> Vec<EventData> {
-        self.event_bus.get_history()
+    /// イベントを発行
+    pub fn publish<E: TypedEvent>(&self, event: E) {
+        self.event_bus.publish(event);
     }
     
-    /// イベント履歴をクリア
-    pub fn clear_history(&self) {
-        self.event_bus.clear_history();
-    }
-    
-    /// すべてのハンドラを削除
-    pub fn clear_handlers(&self) {
-        self.event_bus.clear_handlers();
-    }
-    
-    /// 特定のイベント型に対するハンドラ数を取得
+    /// ハンドラ数を取得
     pub fn handler_count<E: TypedEvent>(&self) -> usize {
         self.event_bus.handler_count::<E>()
     }
-}
-
-impl Default for TypedEventBusResource {
-    fn default() -> Self {
-        Self::new()
+    
+    /// イベントを発行する（優先度付き）
+    pub fn publish_with_priority<E: TypedEvent>(&self, event: E, priority: EventPriority) {
+        self.event_bus.publish_with_priority(event, priority);
+    }
+    
+    /// 複数のイベントをまとめて発行する
+    pub fn publish_batch<E: TypedEvent>(&self, events: Vec<E>, priority: EventPriority) {
+        // バッチモードを開始
+        self.event_bus.start_batch_mode();
+        
+        // イベントをまとめて発行
+        for event in events {
+            self.event_bus.publish_with_priority(event, priority);
+        }
+        
+        // バッチモードを終了
+        self.event_bus.end_batch_mode();
+    }
+    
+    /// リソースとして使用するためのAnyトレイト実装
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    /// リソースとして使用するためのAnyトレイト実装（可変）
+    pub fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 } 

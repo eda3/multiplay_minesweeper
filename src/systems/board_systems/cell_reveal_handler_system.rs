@@ -83,6 +83,7 @@ impl CellRevealHandlerSystem {
                 self.publish_event(
                     MineExplodedEvent {
                         coord: coord.clone(),
+                        is_game_over: true,
                     },
                     resources
                 );
