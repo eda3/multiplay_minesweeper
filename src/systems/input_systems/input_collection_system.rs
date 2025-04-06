@@ -43,7 +43,26 @@ pub struct InputCollectionSystem {
 // グローバルなクロージャ保存用のコンテナ（WASMでのデータ所有権問題回避用）
 #[cfg(target_arch = "wasm32")]
 thread_local! {
+    /// JavaScriptイベントリスナーで使用するクロージャを格納するためのグローバルコンテナ
+    /// 
+    /// # WASM互換性に関する注意
+    /// 
+    /// - WASMでは`Closure`はJavaScriptに渡した後も有効である必要がある
+    /// - `thread_local!`を使用してリソースの所有権問題を回避
+    /// - これにより、Rustの所有権システムとJavaScriptのコールバックモデルの互換性を確保
     static GLOBAL_CLOSURES: RefCell<Vec<Closure<dyn FnMut(Event)>>> = RefCell::new(Vec::new());
+}
+
+/// JavaScriptイベントリスナーのメモリ管理に関するヘルパー関数
+#[cfg(target_arch = "wasm32")]
+fn register_closure(closure: Closure<dyn FnMut(Event)>) -> usize {
+    // クロージャをグローバルコンテナに保存し、インデックスを返す
+    let index = GLOBAL_CLOSURES.with(|closures| {
+        let index = closures.borrow().len();
+        closures.borrow_mut().push(closure);
+        index
+    });
+    index
 }
 
 impl InputCollectionSystem {
@@ -102,34 +121,31 @@ impl InputCollectionSystem {
         let resource_ptr: *mut InputResource = input_resource;
         
         #[cfg(target_arch = "wasm32")]
-        let closure = Closure::wrap(Box::new(move |event: Event| {
-            // イベントのデフォルト動作を防止
-            event.prevent_default();
+        {
+            let closure = Closure::wrap(Box::new(move |event: Event| {
+                // イベントのデフォルト動作を防止
+                event.prevent_default();
+                
+                // 安全でない参照を使用して入力リソースを取得（WASMでは単一スレッドなので安全）
+                let input_resource = unsafe { &mut *resource_ptr };
+                
+                if let Some(_) = event.dyn_ref::<KeyboardEvent>() {
+                    input_resource.handle_key_down(&event);
+                }
+            }) as Box<dyn FnMut(Event)>);
             
-            // 安全でない参照を使用して入力リソースを取得（WASMでは単一スレッドなので安全）
-            let input_resource = unsafe { &mut *resource_ptr };
-            
-            if let Some(_) = event.dyn_ref::<KeyboardEvent>() {
-                input_resource.handle_key_down(&event);
+            // イベントリスナーを追加
+            if let Err(e) = target.add_event_listener_with_callback(
+                "keydown",
+                closure.as_ref().unchecked_ref()
+            ) {
+                return Err(format!("キーダウンリスナーの追加に失敗: {:?}", e));
             }
-        }) as Box<dyn FnMut(Event)>);
-        
-        // イベントリスナーを追加
-        #[cfg(target_arch = "wasm32")]
-        if let Err(e) = target.add_event_listener_with_callback(
-            "keydown",
-            closure.as_ref().unchecked_ref()
-        ) {
-            return Err(format!("キーダウンリスナーの追加に失敗: {:?}", e));
-        }
-        
-        // クロージャを保存して参照をキープ
-        #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
+            
+            // クロージャを保存して参照をキープ
+            let index = register_closure(closure);
             self.cleanup_indices.push(index);
-        });
+        }
         
         Ok(())
     }
@@ -163,11 +179,8 @@ impl InputCollectionSystem {
         
         // クロージャを保存して参照をキープ
         #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
-            self.cleanup_indices.push(index);
-        });
+        let index = register_closure(closure);
+        self.cleanup_indices.push(index);
         
         Ok(())
     }
@@ -178,31 +191,28 @@ impl InputCollectionSystem {
         let resource_ptr: *mut InputResource = input_resource;
         
         #[cfg(target_arch = "wasm32")]
-        let closure = Closure::wrap(Box::new(move |event: Event| {
-            // 安全でない参照を使用して入力リソースを取得（WASMでは単一スレッドなので安全）
-            let input_resource = unsafe { &mut *resource_ptr };
+        {
+            let closure = Closure::wrap(Box::new(move |event: Event| {
+                // 安全でない参照を使用して入力リソースを取得（WASMでは単一スレッドなので安全）
+                let input_resource = unsafe { &mut *resource_ptr };
+                
+                if let Some(_) = event.dyn_ref::<MouseEvent>() {
+                    input_resource.handle_mouse_move(&event);
+                }
+            }) as Box<dyn FnMut(Event)>);
             
-            if let Some(_) = event.dyn_ref::<MouseEvent>() {
-                input_resource.handle_mouse_move(&event);
+            // イベントリスナーを追加
+            if let Err(e) = target.add_event_listener_with_callback(
+                "mousemove",
+                closure.as_ref().unchecked_ref()
+            ) {
+                return Err(format!("マウス移動リスナーの追加に失敗: {:?}", e));
             }
-        }) as Box<dyn FnMut(Event)>);
-        
-        // イベントリスナーを追加
-        #[cfg(target_arch = "wasm32")]
-        if let Err(e) = target.add_event_listener_with_callback(
-            "mousemove",
-            closure.as_ref().unchecked_ref()
-        ) {
-            return Err(format!("マウス移動リスナーの追加に失敗: {:?}", e));
-        }
-        
-        // クロージャを保存して参照をキープ
-        #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
+            
+            // クロージャを保存して参照をキープ
+            let index = register_closure(closure);
             self.cleanup_indices.push(index);
-        });
+        }
         
         Ok(())
     }
@@ -233,11 +243,8 @@ impl InputCollectionSystem {
         
         // クロージャを保存して参照をキープ
         #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
-            self.cleanup_indices.push(index);
-        });
+        let index = register_closure(closure);
+        self.cleanup_indices.push(index);
         
         Ok(())
     }
@@ -268,11 +275,8 @@ impl InputCollectionSystem {
         
         // クロージャを保存して参照をキープ
         #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
-            self.cleanup_indices.push(index);
-        });
+        let index = register_closure(closure);
+        self.cleanup_indices.push(index);
         
         Ok(())
     }
@@ -306,11 +310,8 @@ impl InputCollectionSystem {
         
         // クロージャを保存して参照をキープ
         #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
-            self.cleanup_indices.push(index);
-        });
+        let index = register_closure(closure);
+        self.cleanup_indices.push(index);
         
         Ok(())
     }
@@ -341,11 +342,8 @@ impl InputCollectionSystem {
         
         // クロージャを保存して参照をキープ
         #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
-            self.cleanup_indices.push(index);
-        });
+        let index = register_closure(closure);
+        self.cleanup_indices.push(index);
         
         Ok(())
     }
@@ -376,11 +374,8 @@ impl InputCollectionSystem {
         
         // クロージャを保存して参照をキープ
         #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
-            self.cleanup_indices.push(index);
-        });
+        let index = register_closure(closure);
+        self.cleanup_indices.push(index);
         
         Ok(())
     }
@@ -411,28 +406,24 @@ impl InputCollectionSystem {
         
         // クロージャを保存して参照をキープ
         #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            let index = closures.borrow().len();
-            closures.borrow_mut().push(closure);
-            self.cleanup_indices.push(index);
-        });
+        let index = register_closure(closure);
+        self.cleanup_indices.push(index);
         
         Ok(())
     }
     
-    /// すべてのイベントリスナーのクリーンアップ
+    /// イベントリスナーのクリーンアップ処理
     fn cleanup_event_listeners(&mut self) -> Result<(), String> {
         #[cfg(target_arch = "wasm32")]
-        GLOBAL_CLOSURES.with(|closures| {
-            // クリーンアップ用にクロージャを明示的に解放
-            // 実際のDOMイベントリスナーの削除はブラウザのガベージコレクションに任せる
-            for index in self.cleanup_indices.drain(..) {
-                if index < closures.borrow().len() {
-                    // 特に何もしない（クロージャは保持したまま）
-                    // WASMの終了時にこれらは自動的に解放される
-                }
-            }
-        });
+        {
+            // 明示的なクロージャの解放はJavaScriptのガベージコレクタに任せる
+            // インデックスのクリアのみを行う
+            self.cleanup_indices.clear();
+            
+            // 注意: 実際のDOM側のイベントリスナーを削除するには、
+            // removeEventListener() を呼び出す必要があるが、
+            // WASM環境ではページ遷移時に自動的にクリーンアップされる
+        }
         
         self.initialized = false;
         self.document_set = false;

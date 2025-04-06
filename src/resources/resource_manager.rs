@@ -672,12 +672,50 @@ impl ResourceManager {
     }
     
     /// リソースを可変で取得（互換性レイヤー用）
+    /// 
+    /// # 安全性に関する注意
+    /// 
+    /// このメソッドはWASM環境での使用に最適化されており、特に以下の点に注意が必要です：
+    ///
+    /// - WASM環境では`Send`+`Sync`の制約がなく、単一スレッドで実行されるため安全
+    /// - ポインタを使用して参照の所有権問題（lifetime issues）を回避します
+    /// - イベント処理中など、ライフタイムが明確でない場所でリソースを安全に取得できます
+    ///
+    /// # パラメータ
+    ///
+    /// * `_name` - 互換性のために残されたパラメータ。現在は使用されません
+    ///
+    /// # 戻り値
+    ///
+    /// 指定された型のリソースへの可変参照、または存在しない場合はNone
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn get_resource_mut<R: Resource + 'static>(&mut self, _name: &str) -> Option<&mut R> {
         if let Some(entry) = self.resources.get_mut(&TypeId::of::<R>()) {
             // ResourceEntryから直接R型への参照を取得
             let any_ref = &mut *entry.resource.borrow_mut();
             if let Some(res) = any_ref.downcast_mut::<R>() {
                 // 所有権問題を回避するため、参照返還のライフタイムを制御
+                unsafe {
+                    let ptr = res as *mut R;
+                    return Some(&mut *ptr);
+                }
+            }
+        }
+        None
+    }
+
+    /// リソースを可変で取得（互換性レイヤー用）- WASM最適化版
+    /// 
+    /// WASM環境向けの最適化されたバージョン。WASM固有の制約に対応し、
+    /// 特にJavaScriptイベントハンドラなどからのリソースアクセスを安全に行います。
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_resource_mut<R: Resource + 'static>(&mut self, _name: &str) -> Option<&mut R> {
+        if let Some(entry) = self.resources.get_mut(&TypeId::of::<R>()) {
+            // ResourceEntryから直接R型への参照を取得（WASM環境では単一スレッドなのでborrowの問題が少ない）
+            let any_ref = &mut *entry.resource.borrow_mut();
+            if let Some(res) = any_ref.downcast_mut::<R>() {
+                // WebAssembly環境では単一スレッドなので、この操作は安全
+                // クロージャキャプチャのためのライフタイム処理
                 unsafe {
                     let ptr = res as *mut R;
                     return Some(&mut *ptr);

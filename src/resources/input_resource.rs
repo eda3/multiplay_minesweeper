@@ -275,7 +275,9 @@ impl InputResource {
         // イベントをMouseEventにキャスト
         let mouse_event = event.dyn_ref::<MouseEvent>();
         if let Some(mouse_event) = mouse_event {
-            let button = mouse_event.button() as u16; // i16からu16への明示的なキャスト
+            // WASM環境では型の互換性のためにi16->u16へキャスト
+            // buttonは0:左, 1:中, 2:右 の値を取るので、符号なし整数が適切
+            let button = mouse_event.button() as u16;
             let x = mouse_event.client_x() as f64;
             let y = mouse_event.client_y() as f64;
             
@@ -329,7 +331,9 @@ impl InputResource {
         // イベントをMouseEventにキャスト
         let mouse_event = event.dyn_ref::<MouseEvent>();
         if let Some(mouse_event) = mouse_event {
-            let button = mouse_event.button() as u16; // i16からu16への明示的なキャスト
+            // WASM環境では型の互換性のためにi16->u16へキャスト
+            // buttonは0:左, 1:中, 2:右 の値を取るので、符号なし整数が適切
+            let button = mouse_event.button() as u16;
             let x = mouse_event.client_x() as f64;
             let y = mouse_event.client_y() as f64;
             
@@ -415,7 +419,9 @@ impl InputResource {
             let touches = touch_event.changed_touches();
             for i in 0..touches.length() {
                 if let Some(touch) = touches.get(i) {
-                    let id = touch.identifier() as u32; // i32からu32への明示的なキャスト
+                    // WASM環境では型の互換性のためにi32->u32へキャスト
+                    // タッチIDは常に非負整数なので、符号なし整数が適切
+                    let id = touch.identifier() as u32;
                     let x = touch.client_x() as f64;
                     let y = touch.client_y() as f64;
                     
@@ -443,7 +449,9 @@ impl InputResource {
             let touches = touch_event.changed_touches();
             for i in 0..touches.length() {
                 if let Some(touch) = touches.get(i) {
-                    let id = touch.identifier() as u32; // i32からu32への明示的なキャスト
+                    // WASM環境では型の互換性のためにi32->u32へキャスト
+                    // タッチIDは常に非負整数なので、符号なし整数が適切
+                    let id = touch.identifier() as u32;
                     let x = touch.client_x() as f64;
                     let y = touch.client_y() as f64;
                     
@@ -471,7 +479,9 @@ impl InputResource {
             let touches = touch_event.changed_touches();
             for i in 0..touches.length() {
                 if let Some(touch) = touches.get(i) {
-                    let id = touch.identifier() as u32; // i32からu32への明示的なキャスト
+                    // WASM環境では型の互換性のためにi32->u32へキャスト
+                    // タッチIDは常に非負整数なので、符号なし整数が適切
+                    let id = touch.identifier() as u32;
                     
                     // タッチ情報を削除
                     self.active_touches.remove(&id);
