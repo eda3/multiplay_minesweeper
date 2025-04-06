@@ -17,6 +17,7 @@ use crate::events::input_events::MouseClickEvent;
 use crate::events::typed_event::TypedEvent;
 use crate::events::TypedEventBus;
 use crate::events::EventData;
+use crate::events::typed_event_bus::EventPriority;
 use crate::models::cell::CellValue;
 use crate::models::coordinate::Coordinate;
 use crate::systems::typed_event_system_trait::{TypedEventSystemTrait, TypedEventSystem};
@@ -24,6 +25,56 @@ use crate::ecs::system::System;
 use crate::ecs::system::SystemResult;
 use crate::entities::EntityManager;
 use crate::board::Board;
+
+/// イベント処理リクエストの種類
+#[derive(Debug, Clone)]
+enum EventRequest {
+    /// マウスクリックイベント
+    MouseClick(MouseClickEvent),
+    /// セル公開イベント
+    CellRevealed(CellRevealedEvent),
+    /// 不明なイベント
+    Unknown,
+}
+
+/// イベント処理キュー
+#[derive(Debug, Default)]
+struct EventQueue {
+    /// 処理待ちイベントのキュー
+    queue: VecDeque<EventRequest>,
+    /// 最後に処理したイベントのタイムスタンプ
+    last_processed_timestamp: u64,
+}
+
+impl EventQueue {
+    /// 新しいイベントキューを作成
+    fn new() -> Self {
+        Self {
+            queue: VecDeque::new(),
+            last_processed_timestamp: 0,
+        }
+    }
+    
+    /// イベントをキューに追加
+    fn enqueue(&mut self, request: EventRequest) {
+        self.queue.push_back(request);
+    }
+    
+    /// イベントをキューから取得
+    fn dequeue(&mut self) -> Option<EventRequest> {
+        self.queue.pop_front()
+    }
+    
+    /// 最後に処理したイベントのタイムスタンプを更新
+    fn update_timestamp(&mut self, timestamp: u64) {
+        self.last_processed_timestamp = timestamp;
+    }
+    
+    /// 最後に処理したイベントのタイムスタンプを取得
+    fn get_last_timestamp(&self) -> u64 {
+        self.last_processed_timestamp
+    }
+}
 
 /// 型安全なセル公開システム
 pub struct TypedCellRevealSystem {
@@ -35,6 +86,8 @@ pub struct TypedCellRevealSystem {
     initialized: bool,
     /// システムが有効かどうか
     enabled: bool,
+    /// イベント処理キュー
+    event_queue: Arc<Mutex<EventQueue>>,
 }
 
 impl TypedCellRevealSystem {
@@ -45,6 +98,7 @@ impl TypedCellRevealSystem {
             event_system: TypedEventSystem::new(),
             initialized: false,
             enabled: true,
+            event_queue: Arc::new(Mutex::new(EventQueue::new())),
         }
     }
     
@@ -54,71 +108,35 @@ impl TypedCellRevealSystem {
             return;
         }
         
-        /* 一時的にWASM環境のコードをコメントアウト
-        // スレッド安全にするために参照を持つ代わりに、システム自体をクローンせず、
-        // WASM環境に適したコールバックにする
-        #[cfg(target_arch = "wasm32")]
-        {
-            // WASM向け実装（スレッド安全制約を回避）
-            let system_name = self.name.clone();
-            let system_name_arc = Arc::new(system_name.clone());
-            
-            // スレッド安全なクロージャを作成するためにArcを使用
-            self.subscribe_typed_event::<MouseClickEvent, _>(
-                "MouseClick",
-                "CellRevealHandler",
-                move |event| {
-                    // ここではコールバック内でリソースを使わない
-                    // 実際にはフラグを設定して別の方法で処理する必要がある
-                    let name = system_name_arc.clone();
-                    web_sys::console::log_1(&format!("[{}] マウスクリック: ({}, {})",
-                        name, event.x, event.y).into());
-                },
-                resources
-            );
-            
-            let system_name = self.name.clone();
-            let system_name_arc = Arc::new(system_name.clone());
-            
-            self.subscribe_typed_event::<CellRevealedEvent, _>(
-                "CellRevealed",
-                "RevealHandler",
-                move |event| {
-                    // ここではコールバック内でリソースを使わない
-                    let name = system_name_arc.clone();
-                    web_sys::console::log_1(&format!("[{}] セル公開: ({}, {})",
-                        name, event.coord.row, event.coord.col).into());
-                },
-                resources
-            );
-        }
-        */
+        // イベント処理キューへの参照を取得
+        let event_queue = self.event_queue.clone();
         
-        /* 一時的に非WASM環境のコードもコメントアウト
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // 非WASM環境向け（通常の実装）
-            let system_ref = self.clone();
-            self.subscribe_typed_event::<MouseClickEvent, _>(
-                "MouseClick",
-                "CellRevealHandler",
-                move |event| {
-                    system_ref.handle_mouse_click(event, resources);
-                },
-                resources
-            );
-            
-            let system_ref = self.clone();
-            self.subscribe_typed_event::<CellRevealedEvent, _>(
-                "CellRevealed",
-                "RevealHandler",
-                move |event| {
-                    system_ref.handle_cell_revealed(event, resources);
-                },
-                resources
-            );
-        }
-        */
+        // マウスクリックイベントを購読：キューにイベントを追加するだけのスレッドセーフな実装
+        self.subscribe_typed_event::<MouseClickEvent, _>(
+            "MouseClick",
+            "CellRevealHandler",
+            move |event| {
+                if let Ok(mut queue) = event_queue.lock() {
+                    queue.enqueue(EventRequest::MouseClick(event.clone()));
+                }
+            },
+            resources
+        );
+        
+        // イベント処理キューへの参照を取得
+        let event_queue = self.event_queue.clone();
+        
+        // セル公開イベントを購読：キューにイベントを追加するだけのスレッドセーフな実装
+        self.subscribe_typed_event::<CellRevealedEvent, _>(
+            "CellRevealed",
+            "RevealHandler",
+            move |event| {
+                if let Ok(mut queue) = event_queue.lock() {
+                    queue.enqueue(EventRequest::CellRevealed(event.clone()));
+                }
+            },
+            resources
+        );
         
         self.initialized = true;
     }
@@ -462,6 +480,7 @@ impl Clone for TypedCellRevealSystem {
             event_system: TypedEventSystem::new(),
             initialized: self.initialized,
             enabled: self.enabled,
+            event_queue: self.event_queue.clone(),
         }
     }
 }
@@ -474,32 +493,103 @@ impl Default for TypedCellRevealSystem {
 
 impl System for TypedCellRevealSystem {
     fn update(&mut self, entity_manager: &mut EntityManager, resources: &mut ResourceManager) -> SystemResult {
-        // イベントバスからCellRevealedEventを取得して処理
+        // イベントハンドラを初期化（まだ初期化されていない場合）
+        if !self.initialized {
+            self.initialize_handlers(resources);
+        }
+        
+        // イベントバスから最新のイベントを取得し、キューに対して既に処理済みのイベントを更新
         if let Ok(event_bus_rc) = resources.get::<TypedEventBus>() {
             let event_bus = event_bus_rc.borrow();
             if let Some(event_bus) = event_bus.downcast_ref::<TypedEventBus>() {
-                // イベント履歴を取得
-                let reveal_events = event_bus.get_event_history_by_type::<CellRevealedEvent>();
-                
-                // 最後に受信したイベントのみを処理（既に処理済みのイベントを再処理しないため）
-                if let Some(event) = reveal_events.last() {
-                    // 連鎖反応イベントでないものは、オリジナルのシステムが処理
-                    if !event.is_chain {
-                        // 直接イベントを処理
-                        self.handle_event(event, resources);
+                // キューからタイムスタンプを取得
+                let last_timestamp = {
+                    if let Ok(queue) = self.event_queue.lock() {
+                        queue.get_last_timestamp()
                     } else {
-                        // 連鎖反応イベントは専用のハンドラで処理
-                        // システム自身への参照を取得
-                        let system_ref = self.clone();
-                        
-                        // 連鎖反応処理用の可変リソース参照を渡す
-                        system_ref.handle_cell_revealed(event, resources);
+                        0 // ロックが取得できない場合は0（全イベント処理）
                     }
+                };
+                
+                // 最新のイベントを効率的に取得（最後のタイムスタンプ以降のみ）
+                let reveal_events = event_bus.get_events_by_type_since::<CellRevealedEvent>(last_timestamp);
+                if !reveal_events.is_empty() {
+                    // バッチ処理のためにイベントバスのバッチモードを開始
+                    event_bus.start_batch_mode();
+                    
+                    // イベントをキューに追加
+                    let mut events_to_process = Vec::new();
+                    for event in reveal_events {
+                        if event.is_chain {
+                            // 連鎖反応イベントは低優先度で処理
+                            events_to_process.push((event, EventPriority::Low));
+                        } else {
+                            // 通常のクリックイベントは高優先度で処理
+                            events_to_process.push((event, EventPriority::High));
+                        }
+                    }
+                    
+                    // イベントを処理（優先度順）
+                    for (event, priority) in events_to_process {
+                        event_bus.publish_with_priority(event, priority);
+                    }
+                    
+                    // バッチモードを終了して一括処理
+                    event_bus.end_batch_mode();
                 }
             }
         }
         
-        SystemResult::Ok
+        // キューからイベントを取り出して処理
+        let mut event_count = 0;
+        const MAX_EVENTS_PER_UPDATE: usize = 5; // 1フレームで処理する最大イベント数
+        
+        while event_count < MAX_EVENTS_PER_UPDATE {
+            // キューからイベントを取得
+            let event_request = {
+                if let Ok(mut queue) = self.event_queue.lock() {
+                    queue.dequeue()
+                } else {
+                    None
+                }
+            };
+            
+            // イベントが取得できなければループを抜ける
+            let event_request = match event_request {
+                Some(req) => req,
+                None => break,
+            };
+            
+            // イベントの種類に応じた処理
+            match event_request {
+                EventRequest::MouseClick(event) => {
+                    self.handle_mouse_click(&event, resources);
+                },
+                EventRequest::CellRevealed(event) => {
+                    self.handle_event(&event, resources);
+                },
+                EventRequest::Unknown => {
+                    // 不明なイベントは無視
+                }
+            }
+            
+            event_count += 1;
+        }
+        
+        // イベントを処理した結果、キューに残りがある場合は再実行が必要
+        let needs_rerun = {
+            if let Ok(queue) = self.event_queue.lock() {
+                !queue.queue.is_empty()
+            } else {
+                false
+            }
+        };
+        
+        if needs_rerun {
+            SystemResult::NeedRerun
+        } else {
+            SystemResult::Ok
+        }
     }
     
     fn name(&self) -> &str {

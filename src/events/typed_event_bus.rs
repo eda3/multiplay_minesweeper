@@ -8,12 +8,73 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, RwLock};
+use std::collections::BinaryHeap;
+use std::cmp::{Ord, PartialOrd, Ordering};
 
 use crate::events::typed_event::{TypedEvent, HandlerId, generate_id};
 use crate::events::typed_handler::{
     TypedEventHandler, TypedHandlerCollection, AnyHandlerCollection
 };
 use crate::events::EventData;
+
+/// イベントの優先度（低いほど優先して処理）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EventPriority {
+    /// 高優先度（即時処理が必要なイベント）
+    High = 0,
+    /// 標準優先度（通常のイベント）
+    Normal = 10,
+    /// 低優先度（遅延処理可能なイベント）
+    Low = 20,
+    /// バックグラウンド（非重要イベント）
+    Background = 30,
+}
+
+impl Default for EventPriority {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+/// 優先度付きイベントエントリ
+#[derive(Debug)]
+struct PrioritizedEvent {
+    /// イベントの優先度
+    priority: EventPriority,
+    /// イベントのタイムスタンプ
+    timestamp: u64,
+    /// イベントデータ
+    event: Box<dyn Any + Send + Sync>,
+    /// イベントの型ID
+    type_id: TypeId,
+}
+
+impl PartialEq for PrioritizedEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority && self.timestamp == other.timestamp
+    }
+}
+
+impl Eq for PrioritizedEvent {}
+
+impl PartialOrd for PrioritizedEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PrioritizedEvent {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // 優先度を比較（低い値＝高優先度）
+        let prio_cmp = other.priority.cmp(&self.priority);
+        if prio_cmp != Ordering::Equal {
+            return prio_cmp;
+        }
+        
+        // 同じ優先度の場合はタイムスタンプで比較（低い値＝古いイベント）
+        self.timestamp.cmp(&other.timestamp)
+    }
+}
 
 /// グローバルイベントプロセッサの型定義
 type GlobalProcessor = Box<dyn Fn(&dyn Any) + Send + Sync>;
@@ -27,6 +88,10 @@ pub struct TypedEventBus {
     event_history: Arc<RwLock<Vec<EventData>>>,
     /// 型ごとのイベント履歴（型安全なアクセス用）
     typed_event_history: Arc<RwLock<HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>>>,
+    /// 優先度付きイベントキュー（バッチ処理用）
+    event_queue: Arc<RwLock<BinaryHeap<PrioritizedEvent>>>,
+    /// バッチモードが有効かどうか
+    batch_mode: Arc<RwLock<bool>>,
     /// 履歴の最大サイズ
     max_history_size: usize,
     /// デバッグモード
@@ -42,6 +107,8 @@ impl TypedEventBus {
             handlers: Arc::new(RwLock::new(HashMap::new())),
             event_history: Arc::new(RwLock::new(Vec::new())),
             typed_event_history: Arc::new(RwLock::new(HashMap::new())),
+            event_queue: Arc::new(RwLock::new(BinaryHeap::new())),
+            batch_mode: Arc::new(RwLock::new(false)),
             max_history_size: 100,
             debug: false,
             global_processors: Arc::new(RwLock::new(Vec::new())),
@@ -58,6 +125,62 @@ impl TypedEventBus {
     pub fn with_history_size(mut self, size: usize) -> Self {
         self.max_history_size = size;
         self
+    }
+    
+    /// バッチモードを開始
+    /// このモードではイベントは即時処理されず、キューに追加される
+    pub fn start_batch_mode(&self) {
+        let mut batch_mode = self.batch_mode.write().unwrap();
+        *batch_mode = true;
+    }
+    
+    /// バッチモードを終了し、キューに溜まったイベントを処理
+    pub fn end_batch_mode(&self) {
+        // バッチモードを無効化
+        {
+            let mut batch_mode = self.batch_mode.write().unwrap();
+            *batch_mode = false;
+        }
+        
+        // キューに溜まったイベントを処理
+        self.process_event_queue();
+    }
+    
+    /// キューに溜まったイベントを処理
+    pub fn process_event_queue(&self) {
+        // イベントキューからイベントを取り出して処理
+        loop {
+            let event_opt = {
+                let mut queue = self.event_queue.write().unwrap();
+                queue.pop()
+            };
+            
+            match event_opt {
+                Some(event) => {
+                    self.process_queued_event(event);
+                },
+                None => break, // キューが空になったら終了
+            }
+        }
+    }
+    
+    /// キューに入っているイベントを処理
+    fn process_queued_event(&self, queued_event: PrioritizedEvent) {
+        let type_id = queued_event.type_id;
+        
+        // グローバルプロセッサを実行
+        {
+            let global_processors = self.global_processors.read().unwrap();
+            for processor in &*global_processors {
+                processor(&*queued_event.event);
+            }
+        }
+        
+        // 型固有のハンドラを取得して呼び出し
+        let handlers = self.handlers.read().unwrap();
+        if let Some(handler_collection) = handlers.get(&type_id) {
+            handler_collection.handle_any(&*queued_event.event);
+        }
     }
     
     /// イベントを登録して購読
@@ -108,6 +231,11 @@ impl TypedEventBus {
     
     /// イベントの発行
     pub fn publish<E: TypedEvent>(&self, event: E) {
+        self.publish_with_priority(event, EventPriority::Normal);
+    }
+    
+    /// 優先度付きイベントの発行
+    pub fn publish_with_priority<E: TypedEvent>(&self, event: E, priority: EventPriority) {
         let type_id = TypeId::of::<E>();
         
         // タイプ別のイベント履歴に追加
@@ -139,6 +267,28 @@ impl TypedEventBus {
             println!("イベント発行: {} ({:?})", E::type_name(), event);
         }
         
+        // バッチモードが有効ならキューに追加
+        let is_batch_mode = {
+            let batch_mode = self.batch_mode.read().unwrap();
+            *batch_mode
+        };
+        
+        if is_batch_mode {
+            // キューに追加
+            let prioritized_event = PrioritizedEvent {
+                priority,
+                timestamp: event.timestamp(),
+                event: Box::new(event),
+                type_id,
+            };
+            
+            let mut queue = self.event_queue.write().unwrap();
+            queue.push(prioritized_event);
+            
+            return;
+        }
+        
+        // 通常モード：即時処理
         // グローバルプロセッサを実行
         {
             let global_processors = self.global_processors.read().unwrap();
@@ -152,6 +302,20 @@ impl TypedEventBus {
         if let Some(handler_collection) = handlers.get(&type_id) {
             handler_collection.handle_any(&event as &dyn Any);
         }
+    }
+    
+    /// 一括イベント発行（複数のイベントをバッチで効率的に処理）
+    pub fn publish_batch<E: TypedEvent>(&self, events: Vec<E>, priority: EventPriority) {
+        // バッチモードを開始
+        self.start_batch_mode();
+        
+        // すべてのイベントを発行
+        for event in events {
+            self.publish_with_priority(event, priority);
+        }
+        
+        // バッチモードを終了（イベント処理を実行）
+        self.end_batch_mode();
     }
     
     /// イベント履歴を取得
