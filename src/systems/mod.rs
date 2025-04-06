@@ -40,6 +40,9 @@ pub use event_system_trait::{EventSystemTrait, EventSystem};
 pub use typed_event_system_trait::{TypedEventSystemTrait, TypedEventSystem}; // 型安全なイベントシステム
 pub use base_event_system::{BaseEventSystem, EventQueue, EventRequest, EventProcessingState};
 
+// 入力システムの型の再エクスポート
+pub use input_systems::{MouseButton, InputEventType, InputEvent};
+
 /**
  * システムの初期化関数
  */
