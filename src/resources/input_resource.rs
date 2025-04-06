@@ -4,8 +4,12 @@
  * キーボードとマウスの入力状態を管理する
  */
 use std::collections::{HashMap, HashSet, VecDeque};
+
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
+#[cfg(target_arch = "wasm32")]
 use web_sys::{Event, MouseEvent, KeyboardEvent, WheelEvent, Touch, TouchEvent};
 
 // どちらか一方だけを使用
@@ -183,6 +187,7 @@ impl InputResource {
     }
     
     /// キーダウンイベントを処理
+    #[cfg(target_arch = "wasm32")]
     pub fn handle_key_down(&mut self, event: &Event) {
         if !self.enabled {
             return;
@@ -205,6 +210,7 @@ impl InputResource {
     }
     
     /// キーアップイベントを処理
+    #[cfg(target_arch = "wasm32")]
     pub fn handle_key_up(&mut self, event: &Event) {
         if !self.enabled {
             return;
@@ -227,6 +233,7 @@ impl InputResource {
     }
     
     /// マウス移動イベントを処理
+    #[cfg(target_arch = "wasm32")]
     pub fn handle_mouse_move(&mut self, event: &Event) {
         if !self.enabled {
             return;
@@ -261,12 +268,20 @@ impl InputResource {
         self.mouse.update_position(x_f64, y_f64);
         
         // イベントキューにイベントを追加
+        #[cfg(target_arch = "wasm32")]
         let timestamp = js_sys::Date::now();
+        #[cfg(not(target_arch = "wasm32"))]
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as f64;
+        
         let input_event = InputEvent::new(InputEventType::MouseMove(x_f64, y_f64), timestamp);
         self.push_event(input_event);
     }
     
     /// マウスダウンイベントを処理
+    #[cfg(target_arch = "wasm32")]
     pub fn handle_mouse_down(&mut self, event: &Event) {
         if !self.enabled {
             return;
@@ -309,7 +324,13 @@ impl InputResource {
         
         // マウスイベントを作成
         let (x, y) = (self.mouse.x, self.mouse.y);
+        #[cfg(target_arch = "wasm32")]
         let timestamp = js_sys::Date::now();
+        #[cfg(not(target_arch = "wasm32"))]
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as f64;
         
         let mouse_button = match button {
             0 => MouseButton::Left,
@@ -323,6 +344,7 @@ impl InputResource {
     }
     
     /// マウスアップイベントを処理
+    #[cfg(target_arch = "wasm32")]
     pub fn handle_mouse_up(&mut self, event: &Event) {
         if !self.enabled {
             return;
@@ -371,7 +393,13 @@ impl InputResource {
         
         // マウスイベントを作成
         let (x, y) = (self.mouse.x, self.mouse.y);
+        #[cfg(target_arch = "wasm32")]
         let timestamp = js_sys::Date::now();
+        #[cfg(not(target_arch = "wasm32"))]
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as f64;
         
         let mouse_button = match button {
             0 => MouseButton::Left,
