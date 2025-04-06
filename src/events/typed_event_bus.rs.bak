@@ -397,25 +397,18 @@ impl TypedEventBus {
     
     /// イベントをEventDataに変換（内部実装用）
     fn convert_to_event_data<E: TypedEvent>(&self, event: &E) -> Option<EventData> {
-        let type_name = std::any::type_name::<E>();
-        
-        if self.debug {
-            println!("イベント変換試行: {}", type_name);
-        }
-        
         // まず、イベント自身のto_event_dataメソッドを試す
         // これが最も型安全なアプローチ
         let event_data = event.to_event_data();
         if event_data.is_some() {
             return event_data;
-        } else if self.debug {
-            println!("警告: {}のto_event_dataメソッドが実装されていないか、Noneを返しました", type_name);
         }
         
         // フォールバック: 型名によるマッチングを行う
         // これはリフレクションを使った実装で、理想的にはto_event_dataの実装が望ましい
+        let type_name = std::any::type_name::<E>();
         
-        let result = match type_name {
+        match type_name {
             // ゲームイベント
             "multiplay_minesweeper::events::game_events::GameStartEvent" => {
                 event.as_any().downcast_ref::<crate::events::game_events::GameStartEvent>()
@@ -499,86 +492,10 @@ impl TypedEventBus {
             }
             
             // ネットワークイベント
-            "multiplay_minesweeper::events::network_events::NetworkConnectEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::NetworkConnectEvent>()
-                    .map(|e| EventData::NetworkConnect(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::NetworkDisconnectEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::NetworkDisconnectEvent>()
-                    .map(|e| EventData::NetworkDisconnect(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::NetworkErrorEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::NetworkErrorEvent>()
-                    .map(|e| EventData::NetworkError(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::DataReceivedEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::DataReceivedEvent>()
-                    .map(|e| EventData::DataReceived(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::DataSentEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::DataSentEvent>()
-                    .map(|e| EventData::DataSent(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::SessionJoinEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::SessionJoinEvent>()
-                    .map(|e| EventData::SessionJoin(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::SessionLeaveEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::SessionLeaveEvent>()
-                    .map(|e| EventData::SessionLeave(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::PlayerJoinedEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::PlayerJoinedEvent>()
-                    .map(|e| EventData::PlayerJoined(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::PlayerLeftEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::PlayerLeftEvent>()
-                    .map(|e| EventData::PlayerLeft(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::LagMeasurementEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::LagMeasurementEvent>()
-                    .map(|e| EventData::LagMeasurement(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::PlayerScoreUpdateEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::PlayerScoreUpdateEvent>()
-                    .map(|e| EventData::PlayerScoreUpdate(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::ChatMessageEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::ChatMessageEvent>()
-                    .map(|e| EventData::ChatMessage(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::RoomStateEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::RoomStateEvent>()
-                    .map(|e| EventData::RoomState(e.clone()))
-            }
-            "multiplay_minesweeper::events::network_events::ConnectionStateEvent" => {
-                event.as_any().downcast_ref::<crate::events::network_events::ConnectionStateEvent>()
-                    .map(|e| EventData::ConnectionState(e.clone()))
-            }
+            // ... 他のイベント ...
             
-            // システム関連イベント
-            "multiplay_minesweeper::events::input_events::ResourceLoadEvent" => {
-                event.as_any().downcast_ref::<crate::events::input_events::ResourceLoadEvent>()
-                    .map(|e| EventData::ResourceLoad(e.clone()))
-            }
-            "multiplay_minesweeper::events::input_events::AppStateEvent" => {
-                event.as_any().downcast_ref::<crate::events::input_events::AppStateEvent>()
-                    .map(|e| EventData::AppState(e.clone()))
-            }
-            
-            unknown_type => {
-                if self.debug {
-                    println!("警告: 未知のイベントタイプ: {}", unknown_type);
-                }
-                None
-            }
-        };
-        
-        if result.is_none() && self.debug {
-            println!("エラー: イベントタイプ「{}」のEventDataへの変換に失敗しました", type_name);
+            _ => None,
         }
-        
-        result
     }
     
     /// 登録されているハンドラの数を取得
@@ -610,136 +527,6 @@ impl TypedEventBus {
         collection: &'a mut Box<dyn AnyHandlerCollection + Send + Sync>,
     ) -> Option<&'a mut TypedHandlerCollection<E>> {
         collection.as_any_mut().downcast_mut::<TypedHandlerCollection<E>>()
-    }
-    
-    /// イベントの型変換をテストするためのユーティリティ
-    #[allow(unused_must_use)]
-    fn create_test_event<E: TypedEvent + 'static>() -> Option<E> {
-        let type_name = std::any::type_name::<E>();
-        
-        match type_name {
-            // ゲームイベント
-            "multiplay_minesweeper::events::game_events::GameStartEvent" => {
-                use crate::events::game_events::GameStartEvent;
-                use crate::models::difficulty::Difficulty;
-                
-                let event = GameStartEvent {
-                    difficulty: Difficulty::Beginner,
-                    custom_width: None,
-                    custom_height: None,
-                    custom_mines: None,
-                    is_multiplayer: false,
-                    session_id: None,
-                };
-                
-                unsafe {
-                    // 安全でない変換だが、型名チェックでタイプを確認しているので実行時安全
-                    let event_box = Box::new(event);
-                    let event_raw = Box::into_raw(event_box);
-                    let event_any = Box::from_raw(event_raw as *mut E);
-                    Some(*event_any)
-                }
-            },
-            "multiplay_minesweeper::events::game_events::GameEndEvent" => {
-                use crate::events::game_events::GameEndEvent;
-                
-                let event = GameEndEvent {
-                    is_win: true,
-                    play_time: 100,
-                    revealed_cells: 20,
-                    flagged_cells: 5,
-                    score: 1000,
-                };
-                
-                unsafe {
-                    // 安全でない変換だが、型名チェックでタイプを確認しているので実行時安全
-                    let event_box = Box::new(event);
-                    let event_raw = Box::into_raw(event_box);
-                    let event_any = Box::from_raw(event_raw as *mut E);
-                    Some(*event_any)
-                }
-            },
-            "multiplay_minesweeper::events::game_events::GameStateChangeEvent" => {
-                use crate::events::game_events::{GameStateChangeEvent, GameState};
-                
-                let event = GameStateChangeEvent {
-                    new_state: GameState::Playing,
-                    old_state: GameState::Menu,
-                };
-                
-                unsafe {
-                    // 安全でない変換だが、型名チェックでタイプを確認しているので実行時安全
-                    let event_box = Box::new(event);
-                    let event_raw = Box::into_raw(event_box);
-                    let event_any = Box::from_raw(event_raw as *mut E);
-                    Some(*event_any)
-                }
-            },
-            // ここに他のイベント型のダミーデータを追加
-            // ...
-            
-            _ => None,
-        }
-    }
-    
-    /// 特定のイベント型の変換が正しく機能することを検証
-    pub fn validate_event_conversion<E: TypedEvent + 'static>(&self) -> Result<(), String>
-    where
-        E: Clone,
-    {
-        let type_name = std::any::type_name::<E>();
-        
-        // テスト用イベントを作成
-        let event = match Self::create_test_event::<E>() {
-            Some(e) => e,
-            None => {
-                return Err(format!("❌ イベント型「{}」のテストイベントを作成できませんでした", type_name));
-            }
-        };
-        
-        // 変換を試みる
-        match self.convert_to_event_data(&event) {
-            Some(_) => {
-                if self.debug {
-                    println!("✅ イベント型「{}」の変換が正常に機能しています", type_name);
-                }
-                Ok(())
-            },
-            None => {
-                let error_message = format!("❌ イベント型「{}」のEventDataへの変換に失敗しました", type_name);
-                if self.debug {
-                    println!("{}", error_message);
-                }
-                Err(error_message)
-            }
-        }
-    }
-    
-    /// すべての登録済みイベント型の変換が正しく機能することを検証
-    pub fn validate_all_event_conversions(&self) -> Vec<String> {
-        let mut errors = Vec::new();
-        
-        // ゲームイベント
-        if let Err(e) = self.validate_event_conversion::<crate::events::game_events::GameStartEvent>() {
-            errors.push(e);
-        }
-        if let Err(e) = self.validate_event_conversion::<crate::events::game_events::GameEndEvent>() {
-            errors.push(e);
-        }
-        if let Err(e) = self.validate_event_conversion::<crate::events::game_events::GameStateChangeEvent>() {
-            errors.push(e);
-        }
-        
-        // ここに他のイベント型のバリデーションを追加
-        // ...
-        
-        if errors.is_empty() && self.debug {
-            println!("✅ すべてのイベント型の変換が正常に機能しています");
-        } else if self.debug {
-            println!("❌ {}個のイベント型で変換エラーが発生しました", errors.len());
-        }
-        
-        errors
     }
 }
 
