@@ -105,7 +105,7 @@ impl ResourceManager {
     }
     
     /// リソースがあるかどうかを確認
-    pub fn has<R: Resource>(&self) -> bool {
+    pub fn contains<R: Resource>(&self) -> bool {
         let type_id = TypeId::of::<R>();
         self.resources.contains_key(&type_id)
     }
@@ -116,8 +116,13 @@ impl ResourceManager {
     }
     
     /// リソースの数を取得
-    pub fn count(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.resources.len()
+    }
+    
+    /// リソースマネージャーが空かどうかを取得
+    pub fn is_empty(&self) -> bool {
+        self.resources.is_empty()
     }
     
     /// 新しいリソースを追加するか、既存のリソースを更新
@@ -146,47 +151,193 @@ impl ResourceManager {
             )
         ))
     }
-
-    /// リソースが存在するかチェック
-    pub fn contains<R: Resource>(&self) -> bool {
-        let type_id = TypeId::of::<R>();
-        self.resources.contains_key(&type_id)
-    }
-
-    /// リソースを挿入
-    pub fn insert<R: Resource>(&mut self, resource: R) {
-        let type_id = TypeId::of::<R>();
-        let boxed: Box<dyn Any> = Box::new(resource);
-        let rc = Rc::new(RefCell::new(boxed));
-        self.resources.insert(type_id, rc);
-    }
-
-    /// リソースの数を取得
-    pub fn len(&self) -> usize {
-        self.resources.len()
-    }
-
-    /// リソースマネージャーが空かどうかを取得
-    pub fn is_empty(&self) -> bool {
-        self.resources.is_empty()
-    }
-
-    /// エンティティの数を取得（EntityManagerとの互換性のため）
-    pub fn get_entity_count(&self) -> usize {
-        0 // 実際のエンティティマネージャーがなければ0を返す
-    }
-
+    
     /// リソースを取得（可変）
     pub fn get_mut<R: Resource>(&mut self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
         self.get::<R>()
     }
-
+    
+    /// リソースハッシュマップへの参照を取得
     pub fn resources(&self) -> &HashMap<TypeId, Rc<RefCell<dyn Any>>> {
         &self.resources
     }
-
+    
+    /// 型IDでリソースを取得
     pub fn get_by_type_id(&self, type_id: &TypeId) -> Option<Rc<RefCell<dyn Any>>> {
         self.resources.get(type_id).cloned()
+    }
+    
+    //
+    // 新機能: バッチ処理
+    //
+    
+    /// 複数のリソースに対して読み取り専用の操作を行う
+    pub fn batch<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&ResourceBatch) -> T,
+    {
+        let batch = ResourceBatch {
+            manager: self,
+        };
+        
+        f(&batch)
+    }
+    
+    /// 複数のリソースに対して書き込み操作を行う
+    pub fn batch_mut<F, T>(&mut self, f: F) -> T
+    where
+        F: FnOnce(&mut ResourceBatchMut) -> T,
+    {
+        let mut batch = ResourceBatchMut {
+            manager: self,
+        };
+        
+        f(&mut batch)
+    }
+    
+    //
+    // 互換性レイヤー（古いAPIとの互換性のため）
+    //
+    
+    /// リソースを追加（名前付き、互換性用）
+    pub fn add_resource<R: Resource + 'static>(&mut self, _name: &str, resource: R) {
+        self.add_or_update(resource);
+    }
+    
+    /// リソースを取得（名前付き、互換性用）
+    pub fn get_resource<R: Resource + 'static + Clone>(&self, _name: &str) -> Option<Rc<RefCell<R>>> {
+        match self.get::<R>() {
+            Ok(rc) => {
+                let borrowed = rc.borrow();
+                if let Some(res) = borrowed.downcast_ref::<R>() {
+                    Some(Rc::new(RefCell::new(res.clone())))
+                } else {
+                    None
+                }
+            },
+            Err(_) => None
+        }
+    }
+    
+    /// リソースを削除（名前付き、互換性用）
+    pub fn remove_resource(&mut self, _name: &str) -> bool {
+        // 名前が無視されるため、この互換性レイヤーは完全ではない
+        // 型情報がないため、特定のリソースを削除することはできない
+        false
+    }
+    
+    /// リソースの数を取得（互換性用、len()の別名）
+    pub fn resource_count(&self) -> usize {
+        self.len()
+    }
+    
+    /// リソースが存在するかチェック（互換性用、contains()の別名）
+    pub fn has<R: Resource>(&self) -> bool {
+        self.contains::<R>()
+    }
+    
+    /// リソースの数を取得（互換性用、len()の別名）
+    pub fn count(&self) -> usize {
+        self.len()
+    }
+    
+    /// リソースを挿入（互換性用、add_or_update()の別名）
+    pub fn insert<R: Resource>(&mut self, resource: R) {
+        self.add_or_update(resource);
+    }
+}
+
+/// リソースバッチ - 複数のリソースに対する読み取り専用アクセス
+pub struct ResourceBatch<'a> {
+    manager: &'a ResourceManager,
+}
+
+impl<'a> ResourceBatch<'a> {
+    /// リソースを取得
+    pub fn get<R: Resource + Clone>(&self, _name: &str) -> Option<Rc<RefCell<R>>> {
+        self.manager.get_resource::<R>(_name)
+    }
+    
+    /// リソースを型のみで取得
+    pub fn get_by_type<R: Resource>(&self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
+        self.manager.get::<R>()
+    }
+    
+    /// リソースがあるかどうかを確認
+    pub fn contains<R: Resource>(&self) -> bool {
+        self.manager.contains::<R>()
+    }
+    
+    /// リソースの数を取得
+    pub fn len(&self) -> usize {
+        self.manager.len()
+    }
+    
+    /// バッチが空かどうかを取得
+    pub fn is_empty(&self) -> bool {
+        self.manager.is_empty()
+    }
+}
+
+/// 可変リソースバッチ - 複数のリソースに対する読み書きアクセス
+pub struct ResourceBatchMut<'a> {
+    manager: &'a mut ResourceManager,
+}
+
+impl<'a> ResourceBatchMut<'a> {
+    /// リソースを取得（読み取り専用）
+    pub fn get<R: Resource + Clone>(&self, _name: &str) -> Option<Rc<RefCell<R>>> {
+        self.manager.get_resource::<R>(_name)
+    }
+    
+    /// リソースを取得（可変）
+    pub fn get_mut<R: Resource + Clone>(&mut self, _name: &str) -> Option<Rc<RefCell<R>>> {
+        self.manager.get_resource::<R>(_name)
+    }
+    
+    /// リソースを型のみで取得（読み取り専用）
+    pub fn get_by_type<R: Resource>(&self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
+        self.manager.get::<R>()
+    }
+    
+    /// リソースを型のみで取得（可変）
+    pub fn get_by_type_mut<R: Resource>(&mut self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
+        self.manager.get_mut::<R>()
+    }
+    
+    /// リソースを追加
+    pub fn add<R: Resource>(&mut self, resource: R) -> ResourceResult<()> {
+        self.manager.add(resource)
+    }
+    
+    /// リソースを更新
+    pub fn update<R: Resource>(&mut self, resource: R) -> ResourceResult<()> {
+        self.manager.update(resource)
+    }
+    
+    /// リソースを追加または更新
+    pub fn add_or_update<R: Resource>(&mut self, resource: R) {
+        self.manager.add_or_update(resource)
+    }
+    
+    /// リソースを削除
+    pub fn remove<R: Resource>(&mut self) -> Result<(), ResourceError> {
+        self.manager.remove::<R>()
+    }
+    
+    /// リソースがあるかどうかを確認
+    pub fn contains<R: Resource>(&self) -> bool {
+        self.manager.contains::<R>()
+    }
+    
+    /// リソースの数を取得
+    pub fn len(&self) -> usize {
+        self.manager.len()
+    }
+    
+    /// バッチが空かどうかを取得
+    pub fn is_empty(&self) -> bool {
+        self.manager.is_empty()
     }
 }
 
