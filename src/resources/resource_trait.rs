@@ -40,7 +40,7 @@ pub trait Resource: 'static {
     }
 }
 
-// Blanket実装でResource traitをすべてのAny型に実装
+// すべての'static型に対するResource traitの自動実装
 impl<T: Any + 'static> Resource for T {
     fn as_any(&self) -> &dyn Any {
         self

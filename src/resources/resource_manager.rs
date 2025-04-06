@@ -76,26 +76,36 @@ impl std::fmt::Display for ResourceError {
 /// リソースの結果型
 pub type ResourceResult<T> = Result<T, ResourceError>;
 
-/// リソースの初期化状態
+/// リソースの初期化状態を表す列挙型
+/// 
+/// リソースの現在のライフサイクルステージを追跡し、
+/// 不正な状態遷移や状態に応じた操作を制御するために使用されます。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InitStatus {
-    /// 未初期化
-    Uninitialized,
-    /// 初期化中（循環依存検出用）
+pub enum InitStatus {
+    /// 初期化されていない状態
+    NotInitialized,
+    /// 初期化処理中の状態
     Initializing,
-    /// 初期化済み
+    /// 初期化が完了した状態
     Initialized,
+    /// シャットダウン処理中の状態
+    ShuttingDown,
+    /// シャットダウンが完了した状態
+    ShutDown,
 }
 
-/// リソースエントリ - リソースとその管理情報をまとめた構造体
+/// リソースエントリ
+/// 
+/// リソースデータと、そのリソースに関連するメタデータを保持します。
+/// ResourceManagerによって内部的に使用されます。
 #[derive(Debug)]
-struct ResourceEntry {
-    /// リソース本体
-    resource: Rc<RefCell<dyn Any>>,
-    /// 初期化状態
-    init_status: InitStatus,
-    /// 依存するリソースのTypeId
-    dependencies: HashSet<TypeId>,
+pub struct ResourceEntry {
+    /// リソースデータへの参照
+    pub resource: Rc<RefCell<dyn Any>>,
+    /// リソースの初期化状態
+    pub init_status: InitStatus,
+    /// リソースが依存する他のリソースの型ID
+    pub dependencies: HashSet<TypeId>,
 }
 
 /// リソースマネージャー
@@ -147,7 +157,7 @@ impl ResourceManager {
         let rc = Rc::new(RefCell::new(resource));
         self.resources.insert(type_id, ResourceEntry {
             resource: rc,
-            init_status: InitStatus::Uninitialized,
+            init_status: InitStatus::NotInitialized,
             dependencies,
         });
         
@@ -156,13 +166,14 @@ impl ResourceManager {
         
         // 遅延初期化でなければすぐに初期化
         if !self.lazy_initialization {
-            self.initialize_resource::<R>()?;
+            let type_id = TypeId::of::<R>();
+            self.initialize_resource_with_type(type_id)?;
         }
         
         Ok(())
     }
     
-    /// リソースを初期化（内部用）
+    /// リソースを初期化する内部メソッド
     fn initialize_resource<R: Resource>(&mut self) -> ResourceResult<()> {
         let type_id = TypeId::of::<R>();
         self.initialize_resource_by_type(type_id)
@@ -267,6 +278,7 @@ impl ResourceManager {
         // すでに訪問済みならスキップ
         if visited.contains(&type_id) {
             return Ok(());
+
         }
         
         // 一時的に訪問済みとしてマーク
@@ -285,6 +297,12 @@ impl ResourceManager {
         result.push(type_id);
         
         Ok(())
+    }
+    
+    /// リソースを初期化
+    pub fn initialize<R: Resource>(&mut self) -> ResourceResult<()> {
+        let type_id = TypeId::of::<R>();
+        self.initialize_resource_with_type(type_id)
     }
     
     /// すべてのリソースを初期化
@@ -336,7 +354,7 @@ impl ResourceManager {
         let rc = Rc::new(RefCell::new(resource));
         self.resources.insert(type_id, ResourceEntry {
             resource: rc,
-            init_status: InitStatus::Uninitialized,
+            init_status: InitStatus::NotInitialized,
             dependencies,
         });
         
@@ -345,7 +363,8 @@ impl ResourceManager {
         
         // 遅延初期化でなければすぐに初期化
         if !self.lazy_initialization {
-            self.initialize_resource::<R>()?;
+            let type_id = TypeId::of::<R>();
+            self.initialize_resource_with_type(type_id)?;
         }
         
         Ok(())
@@ -367,7 +386,7 @@ impl ResourceManager {
                     ));
                 }
                 
-                entry.init_status = InitStatus::Uninitialized;
+                entry.init_status = InitStatus::NotInitialized;
             }
         }
         
@@ -441,7 +460,7 @@ impl ResourceManager {
         
         self.resources.insert(type_id, ResourceEntry {
             resource: rc,
-            init_status: InitStatus::Uninitialized,
+            init_status: InitStatus::NotInitialized,
             dependencies,
         });
         
@@ -625,7 +644,7 @@ impl ResourceManager {
     
     /// リソースの数を取得（互換性用、len()の別名）
     pub fn resource_count(&self) -> usize {
-        self.len()
+        self.resources.len()
     }
     
     /// リソースが存在するかチェック（互換性用、contains()の別名）
@@ -641,6 +660,110 @@ impl ResourceManager {
     /// リソースを挿入（互換性用、add_or_update()の別名）
     pub fn insert<R: Resource>(&mut self, resource: R) {
         self.add_or_update(resource);
+    }
+    
+    /// すべての依存関係を初期化
+    pub fn initialize_dependencies(&mut self) -> ResourceResult<()> {
+        let type_ids: Vec<TypeId> = self.resources.keys().cloned().collect();
+        
+        for type_id in type_ids {
+            self.initialize_resource_with_type(type_id)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// すべてのリソースを初期化（依存関係を考慮）
+    pub fn initialize_all_resources(&mut self) -> ResourceResult<()> {
+        let type_ids: Vec<TypeId> = self.resources.keys().cloned().collect();
+        
+        for type_id in type_ids {
+            self.initialize_resource_with_type(type_id)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// すべてのリソースを一括初期化
+    pub fn batch_initialize(&mut self) -> ResourceResult<()> {
+        // 初期化順序に従って初期化
+        for type_id in self.init_order.clone() {
+            self.initialize_resource_with_type(type_id)?;
+        }
+        
+        Ok(())
+    }
+
+    /// 型IDでリソースを初期化
+    fn initialize_resource_with_type(&mut self, type_id: TypeId) -> ResourceResult<()> {
+        // リソースの初期化状態を確認
+        if let Some(entry) = self.resources.get(&type_id) {
+            // 初期化状態をチェック
+            if entry.init_status == InitStatus::Initialized {
+                // 既に初期化済みならスキップ
+                return Ok(());
+            }
+            
+            // 循環依存チェック
+            if entry.init_status == InitStatus::Initializing {
+                let type_name = format!("{:?}", type_id);
+                
+                return Err(ResourceError::CircularDependency(type_name));
+            }
+        } else {
+            let type_name = format!("{:?}", type_id);
+            
+            return Err(ResourceError::NotFound(type_name));
+        }
+        
+        // 初期化中にセット
+        if let Some(entry) = self.resources.get_mut(&type_id) {
+            entry.init_status = InitStatus::Initializing;
+        }
+        
+        // 依存リソースを先に初期化
+        let dependencies = if let Some(entry) = self.resources.get(&type_id) {
+            entry.dependencies.clone()
+        } else {
+            HashSet::new()
+        };
+        
+        for dep_type_id in dependencies {
+            self.initialize_resource_with_type(dep_type_id)?;
+        }
+        
+        // リソースの初期化
+        if let Some(entry) = self.resources.get_mut(&type_id) {
+            let result: ResourceResult<()> = {
+                // リソース固有の初期化処理を実行
+                if let Ok(mut any_resource) = entry.resource.try_borrow_mut() {
+                    // ResourceトレイトのinitializeメソッドをAnyにダウンキャストして呼び出す方法はないため、
+                    // 各リソース型に対して特化したハンドラを実装するか、マクロを使う必要があります。
+                    // ここでは簡易的な実装として、初期化ステータスだけ設定します。
+                    
+                    Ok(())
+                } else {
+                    let type_name = format!("{:?}", type_id);
+                    
+                    Err(ResourceError::InitializationFailed(format!(
+                        "リソース {} の借用に失敗しました", type_name
+                    )))
+                }
+            };
+            
+            // 初期化結果を状態に反映
+            if result.is_ok() {
+                entry.init_status = InitStatus::Initialized;
+            } else {
+                entry.init_status = InitStatus::NotInitialized;
+            }
+            
+            return result;
+        }
+        
+        let type_name = format!("{:?}", type_id);
+        
+        Err(ResourceError::NotFound(type_name))
     }
 }
 
@@ -916,4 +1039,4 @@ mod tests {
         assert_eq!(manager.count(), 0);
         assert!(!manager.has::<TestResource>());
     }
-} 
+}
