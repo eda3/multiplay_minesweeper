@@ -136,11 +136,89 @@ impl TypedEventBus {
     }
     
     /// イベントをEventDataに変換（内部実装用）
-    fn convert_to_event_data<E: TypedEvent>(&self, _event: &E) -> Option<EventData> {
-        // 各イベント型に対応する変換を行う
-        // このメソッドは既存のコードベースとの互換性のために存在
-        // 実際の実装では必要に応じて拡張する
-        None
+    fn convert_to_event_data<E: TypedEvent>(&self, event: &E) -> Option<EventData> {
+        // まず、イベント自身のto_event_dataメソッドを試す
+        // これが最も型安全なアプローチ
+        let event_data = event.to_event_data();
+        if event_data.is_some() {
+            return event_data;
+        }
+        
+        // フォールバック: 型名によるマッチングを行う
+        // これはリフレクションを使った実装で、理想的にはto_event_dataの実装が望ましい
+        let type_name = std::any::type_name::<E>();
+        
+        match type_name {
+            // ゲームイベント
+            "multiplay_minesweeper::events::game_events::GameStartEvent" => {
+                event.as_any().downcast_ref::<crate::events::game_events::GameStartEvent>()
+                    .map(|e| EventData::GameStart(e.clone()))
+            }
+            "multiplay_minesweeper::events::game_events::GameEndEvent" => {
+                event.as_any().downcast_ref::<crate::events::game_events::GameEndEvent>()
+                    .map(|e| EventData::GameEnd(e.clone()))
+            }
+            "multiplay_minesweeper::events::game_events::GameStateChangeEvent" => {
+                event.as_any().downcast_ref::<crate::events::game_events::GameStateChangeEvent>()
+                    .map(|e| EventData::GameStateChange(e.clone()))
+            }
+            "multiplay_minesweeper::events::game_events::TimerEvent" => {
+                event.as_any().downcast_ref::<crate::events::game_events::TimerEvent>()
+                    .map(|e| EventData::Timer(e.clone()))
+            }
+            "multiplay_minesweeper::events::game_events::DifficultyChangeEvent" => {
+                event.as_any().downcast_ref::<crate::events::game_events::DifficultyChangeEvent>()
+                    .map(|e| EventData::DifficultyChange(e.clone()))
+            }
+            "multiplay_minesweeper::events::game_events::ScoreUpdateEvent" => {
+                event.as_any().downcast_ref::<crate::events::game_events::ScoreUpdateEvent>()
+                    .map(|e| EventData::ScoreUpdate(e.clone()))
+            }
+            
+            // ボードイベント
+            "multiplay_minesweeper::events::board_events::CellStateChangeEvent" => {
+                event.as_any().downcast_ref::<crate::events::board_events::CellStateChangeEvent>()
+                    .map(|e| EventData::CellStateChange(e.clone()))
+            }
+            "multiplay_minesweeper::events::board_events::BulkCellStateChangeEvent" => {
+                event.as_any().downcast_ref::<crate::events::board_events::BulkCellStateChangeEvent>()
+                    .map(|e| EventData::BulkCellStateChange(e.clone()))
+            }
+            "multiplay_minesweeper::events::board_events::FlagPlacedEvent" => {
+                event.as_any().downcast_ref::<crate::events::board_events::FlagPlacedEvent>()
+                    .map(|e| EventData::FlagPlaced(e.clone()))
+            }
+            "multiplay_minesweeper::events::board_events::CellRevealedEvent" => {
+                event.as_any().downcast_ref::<crate::events::board_events::CellRevealedEvent>()
+                    .map(|e| EventData::CellRevealed(e.clone()))
+            }
+            "multiplay_minesweeper::events::board_events::MultipleCellsRevealedEvent" => {
+                event.as_any().downcast_ref::<crate::events::board_events::MultipleCellsRevealedEvent>()
+                    .map(|e| EventData::MultipleCellsRevealed(e.clone()))
+            }
+            "multiplay_minesweeper::events::board_events::MineExplodedEvent" => {
+                event.as_any().downcast_ref::<crate::events::board_events::MineExplodedEvent>()
+                    .map(|e| EventData::MineExploded(e.clone()))
+            }
+            "multiplay_minesweeper::events::board_events::BoardInitializedEvent" => {
+                event.as_any().downcast_ref::<crate::events::board_events::BoardInitializedEvent>()
+                    .map(|e| EventData::BoardInitialized(e.clone()))
+            }
+            "multiplay_minesweeper::events::board_events::GameProgressEvent" => {
+                event.as_any().downcast_ref::<crate::events::board_events::GameProgressEvent>()
+                    .map(|e| EventData::GameProgress(e.clone()))
+            }
+            
+            // その他のイベント型を必要に応じて追加
+            // デバッグモードの場合はマッピングされなかった型を出力
+            _ => {
+                if self.debug {
+                    println!("警告: EventDataへの変換が未実装の型: {}", type_name);
+                    println!("ヒント: イベント型に to_event_data() メソッドを実装してください");
+                }
+                None
+            }
+        }
     }
     
     /// 特定のイベント型に対するハンドラ数を取得

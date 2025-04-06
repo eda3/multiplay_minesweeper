@@ -7,6 +7,10 @@ use std::sync::Arc;
 use crate::events::typed_event::TypedEvent;
 use crate::events::typed_handler::TypedEventHandler;
 use crate::events::typed_event_bus::TypedEventBus;
+use crate::events::EventData;
+use crate::events::board_events::{CellRevealedEvent, MineExplodedEvent, BoardInitializedEvent};
+use crate::models::cell::CellValue;
+use crate::models::coordinate::Coordinate;
 
 // テスト用のイベント
 #[derive(Debug, Clone)]
@@ -15,7 +19,23 @@ struct TestEvent {
     message: String,
 }
 
-impl TypedEvent for TestEvent {}
+// Event実装
+impl crate::events::event_trait::Event for TestEvent {
+    fn name(&self) -> &'static str {
+        "TestEvent"
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+// 明示的にTypedEventを実装
+impl TypedEvent for TestEvent {
+    fn to_event_data(&self) -> Option<EventData> {
+        None // テスト用なので変換は定義しない
+    }
+}
 
 // 別のテスト用イベント
 #[derive(Debug, Clone)]
@@ -23,7 +43,23 @@ struct OtherEvent {
     code: i32,
 }
 
-impl TypedEvent for OtherEvent {}
+// Event実装
+impl crate::events::event_trait::Event for OtherEvent {
+    fn name(&self) -> &'static str {
+        "OtherEvent"
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+// 明示的にTypedEventを実装
+impl TypedEvent for OtherEvent {
+    fn to_event_data(&self) -> Option<EventData> {
+        None // テスト用なので変換は定義しない
+    }
+}
 
 #[test]
 fn test_typed_event_bus_basic() {
@@ -248,4 +284,109 @@ fn test_typed_event_handler_enabled() {
     
     // ハンドラが正しく実行されたことを確認
     assert_eq!(counter.load(Ordering::SeqCst), 2); // 最初と3回目のみ
+}
+
+#[test]
+fn test_typed_event_to_event_data() {
+    // CellRevealedEventのテスト
+    let cell_event = CellRevealedEvent {
+        coord: Coordinate::new(5, 5),
+        value: CellValue::Empty(0), // 0は周囲の地雷数
+        is_chain: false,
+    };
+    
+    // to_event_dataメソッドのテスト
+    if let Some(event_data) = cell_event.to_event_data() {
+        if let EventData::CellRevealed(event) = event_data {
+            assert_eq!(event.coord, Coordinate::new(5, 5));
+            assert_eq!(event.value, CellValue::Empty(0));
+            assert_eq!(event.is_chain, false);
+        } else {
+            panic!("CellRevealedEvent.to_event_dataが正しく変換されていません");
+        }
+    } else {
+        panic!("CellRevealedEvent.to_event_dataがNoneを返しています");
+    }
+    
+    // MineExplodedEventのテスト
+    let mine_event = MineExplodedEvent {
+        coord: Coordinate::new(3, 4),
+    };
+    
+    // to_event_dataメソッドのテスト
+    if let Some(event_data) = mine_event.to_event_data() {
+        if let EventData::MineExploded(event) = event_data {
+            assert_eq!(event.coord, Coordinate::new(3, 4));
+        } else {
+            panic!("MineExplodedEvent.to_event_dataが正しく変換されていません");
+        }
+    } else {
+        panic!("MineExplodedEvent.to_event_dataがNoneを返しています");
+    }
+    
+    // BoardInitializedEventのテスト
+    let board_event = BoardInitializedEvent {
+        width: 10,
+        height: 10,
+        mine_count: 15,
+        first_click: Some(Coordinate::new(5, 5)),
+    };
+    
+    // to_event_dataメソッドのテスト
+    if let Some(event_data) = board_event.to_event_data() {
+        if let EventData::BoardInitialized(event) = event_data {
+            assert_eq!(event.width, 10);
+            assert_eq!(event.height, 10);
+            assert_eq!(event.mine_count, 15);
+            assert_eq!(event.first_click, Some(Coordinate::new(5, 5)));
+        } else {
+            panic!("BoardInitializedEvent.to_event_dataが正しく変換されていません");
+        }
+    } else {
+        panic!("BoardInitializedEvent.to_event_dataがNoneを返しています");
+    }
+}
+
+#[test]
+fn test_typed_event_bus_event_data_conversion() {
+    // イベントバスの作成
+    let event_bus = TypedEventBus::new().with_debug(true);
+    
+    // イベント履歴を収集するカウンタとハンドラ
+    let event_history_count = Arc::new(AtomicUsize::new(0));
+    let event_history_count_clone = event_history_count.clone();
+    
+    // CellRevealedEventハンドラを登録
+    event_bus.subscribe::<CellRevealedEvent, _>(
+        "cell_revealed_counter",
+        move |_| {
+            event_history_count_clone.fetch_add(1, Ordering::SeqCst);
+        }
+    );
+    
+    // イベントを発行
+    let cell_event = CellRevealedEvent {
+        coord: Coordinate::new(5, 5),
+        value: CellValue::Empty(0), // 0は周囲の地雷数
+        is_chain: false,
+    };
+    
+    event_bus.publish(cell_event);
+    
+    // ハンドラが呼び出されたことを確認
+    assert_eq!(event_history_count.load(Ordering::SeqCst), 1);
+    
+    // イベント履歴を確認
+    let history = event_bus.get_history();
+    assert!(!history.is_empty(), "イベント履歴が空です");
+    
+    // 履歴の最初のイベントがCellRevealedEventであることを確認
+    match history.get(0) {
+        Some(EventData::CellRevealed(event)) => {
+            assert_eq!(event.coord, Coordinate::new(5, 5));
+            assert_eq!(event.value, CellValue::Empty(0));
+            assert_eq!(event.is_chain, false);
+        },
+        _ => panic!("イベント履歴の最初のイベントがCellRevealedEventではありません"),
+    }
 } 

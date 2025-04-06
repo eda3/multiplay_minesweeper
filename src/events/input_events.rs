@@ -6,7 +6,10 @@
 use std::fmt::Debug;
 use serde::{Serialize, Deserialize};
 use crate::events::event_trait::Event;
+use crate::events::typed_event::TypedEvent;
+use crate::events::EventData;
 use crate::impl_event;
+use crate::impl_typed_event;
 
 /// マウス移動イベント - マウスの移動を表す
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,4 +81,11 @@ impl_event!(MouseMoveEvent, "MouseMove");
 impl_event!(MouseClickEvent, "MouseClick");
 impl_event!(KeyboardEvent, "Keyboard");
 impl_event!(UIClickEvent, "UIClick");
-impl_event!(HotkeyEvent, "Hotkey"); 
+impl_event!(HotkeyEvent, "Hotkey");
+
+// TypedEvent実装
+impl_typed_event!(MouseMoveEvent);
+impl_typed_event!(MouseClickEvent);
+impl_typed_event!(KeyboardEvent);
+impl_typed_event!(UIClickEvent);
+impl_typed_event!(HotkeyEvent); 

@@ -6,7 +6,10 @@
 use std::fmt::Debug;
 use serde::{Serialize, Deserialize};
 use crate::events::event_trait::Event;
+use crate::events::typed_event::TypedEvent;
+use crate::events::EventData;
 use crate::impl_event;
+use crate::impl_typed_event;
 
 /// ネットワーク接続イベント - サーバーへの接続を表す
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,4 +131,16 @@ impl_event!(SessionJoinEvent, "SessionJoin");
 impl_event!(SessionLeaveEvent, "SessionLeave");
 impl_event!(PlayerJoinedEvent, "PlayerJoined");
 impl_event!(PlayerLeftEvent, "PlayerLeft");
-impl_event!(LagMeasurementEvent, "LagMeasurement"); 
+impl_event!(LagMeasurementEvent, "LagMeasurement");
+
+// TypedEvent実装
+impl_typed_event!(NetworkConnectEvent);
+impl_typed_event!(NetworkDisconnectEvent);
+impl_typed_event!(NetworkErrorEvent);
+impl_typed_event!(DataReceivedEvent);
+impl_typed_event!(DataSentEvent);
+impl_typed_event!(SessionJoinEvent);
+impl_typed_event!(SessionLeaveEvent);
+impl_typed_event!(PlayerJoinedEvent);
+impl_typed_event!(PlayerLeftEvent);
+impl_typed_event!(LagMeasurementEvent); 

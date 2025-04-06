@@ -25,10 +25,39 @@ pub trait TypedEvent: Event + 'static {
     fn concrete_type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
+    
+    /// イベントをEventDataに変換
+    /// 各イベント型で個別に実装することで型安全性を向上させる
+    fn to_event_data(&self) -> Option<crate::events::EventData> {
+        // デフォルト実装ではNoneを返す
+        // 具体的なイベント型でオーバーライドする
+        None
+    }
 }
 
-// 自動実装 - すべてのEventはTypedEventも実装
-impl<T: Event + 'static> TypedEvent for T {}
+/// TypedEventトレイトの自動実装マクロ
+/// 特定の型に対してトレイトを実装する
+#[macro_export]
+macro_rules! impl_typed_event {
+    ($type:ty) => {
+        impl TypedEvent for $type {}
+    };
+}
+
+/// TypedEventトレイトの自動実装マクロ（to_event_dataをカスタマイズ）
+#[macro_export]
+macro_rules! impl_typed_event_with_conversion {
+    ($type:ty, $conversion:expr) => {
+        impl TypedEvent for $type {
+            fn to_event_data(&self) -> Option<crate::events::EventData> {
+                $conversion(self)
+            }
+        }
+    };
+}
+
+// 注意: ブランケット実装は削除しました
+// デフォルト実装を使いたい場合は個別にimpl_typed_eventマクロを使用してください
 
 /// 型付きイベントの識別子
 /// 型の情報とイベントIDを保持する

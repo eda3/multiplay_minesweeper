@@ -6,7 +6,10 @@
 use std::fmt::Debug;
 use serde::{Serialize, Deserialize};
 use crate::events::event_trait::Event;
+use crate::events::typed_event::TypedEvent;
+use crate::events::EventData;
 use crate::impl_event;
+use crate::impl_typed_event;
 use crate::models::difficulty::Difficulty;
 
 /// ゲーム開始イベント - ゲームの開始を表す
@@ -104,4 +107,12 @@ impl_event!(GameEndEvent, "GameEnd");
 impl_event!(GameStateChangeEvent, "GameStateChange");
 impl_event!(TimerEvent, "Timer");
 impl_event!(DifficultyChangeEvent, "DifficultyChange");
-impl_event!(ScoreUpdateEvent, "ScoreUpdate"); 
+impl_event!(ScoreUpdateEvent, "ScoreUpdate");
+
+// TypedEvent実装
+impl_typed_event!(GameStartEvent);
+impl_typed_event!(GameEndEvent);
+impl_typed_event!(GameStateChangeEvent);
+impl_typed_event!(TimerEvent);
+impl_typed_event!(DifficultyChangeEvent);
+impl_typed_event!(ScoreUpdateEvent); 

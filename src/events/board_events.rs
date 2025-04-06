@@ -6,7 +6,11 @@
 use std::fmt::Debug;
 use serde::{Serialize, Deserialize};
 use crate::events::event_trait::Event;
+use crate::events::typed_event::TypedEvent;
+use crate::events::EventData;
 use crate::impl_event;
+use crate::impl_typed_event;
+use crate::impl_typed_event_with_conversion;
 use crate::models::cell::{CellState, CellValue};
 use crate::models::coordinate::Coordinate;
 
@@ -100,4 +104,16 @@ impl_event!(CellRevealedEvent, "CellRevealed");
 impl_event!(MultipleCellsRevealedEvent, "MultipleCellsRevealed");
 impl_event!(MineExplodedEvent, "MineExploded");
 impl_event!(BoardInitializedEvent, "BoardInitialized");
-impl_event!(GameProgressEvent, "GameProgress"); 
+impl_event!(GameProgressEvent, "GameProgress");
+
+// TypedEvent実装（個別実装）
+impl_typed_event_with_conversion!(CellRevealedEvent, |event: &CellRevealedEvent| Some(EventData::CellRevealed(event.clone())));
+impl_typed_event_with_conversion!(MineExplodedEvent, |event: &MineExplodedEvent| Some(EventData::MineExploded(event.clone())));
+impl_typed_event_with_conversion!(BoardInitializedEvent, |event: &BoardInitializedEvent| Some(EventData::BoardInitialized(event.clone())));
+impl_typed_event_with_conversion!(MultipleCellsRevealedEvent, |event: &MultipleCellsRevealedEvent| Some(EventData::MultipleCellsRevealed(event.clone())));
+impl_typed_event_with_conversion!(GameProgressEvent, |event: &GameProgressEvent| Some(EventData::GameProgress(event.clone())));
+
+// その他のイベント用にデフォルト実装
+impl_typed_event!(CellStateChangeEvent);
+impl_typed_event!(BulkCellStateChangeEvent);
+impl_typed_event!(FlagPlacedEvent); 
