@@ -272,19 +272,19 @@ impl<E: TypedEvent> AnyHandlerCollection for TypedHandlerCollection<E> {
     }
     
     fn remove(&mut self, handler_id: HandlerId) -> bool {
-        self.remove(handler_id)
+        TypedHandlerCollection::<E>::remove(self, handler_id)
     }
     
     fn clear(&mut self) {
-        self.clear()
+        TypedHandlerCollection::<E>::clear(self)
     }
     
     fn len(&self) -> usize {
-        self.len()
+        self.handlers.len()
     }
     
     fn is_empty(&self) -> bool {
-        self.is_empty()
+        self.handlers.is_empty()
     }
     
     fn box_clone(&self) -> Box<dyn AnyHandlerCollection> {

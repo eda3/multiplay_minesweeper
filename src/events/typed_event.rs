@@ -33,6 +33,12 @@ pub trait TypedEvent: Event + 'static {
         // 具体的なイベント型でオーバーライドする
         None
     }
+    
+    /// イベントのタイムスタンプを取得
+    /// デフォルトでは0を返す（タイムスタンプを持たないイベント用）
+    fn timestamp(&self) -> u64 {
+        0
+    }
 }
 
 /// TypedEventトレイトの自動実装マクロ

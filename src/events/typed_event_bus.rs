@@ -15,6 +15,9 @@ use crate::events::typed_handler::{
 };
 use crate::events::EventData;
 
+/// グローバルイベントプロセッサの型定義
+type GlobalProcessor = Box<dyn Fn(&dyn Any) + Send + Sync>;
+
 /// 型付きイベントバス：型安全なイベントの発行と購読を管理するハブ
 #[derive(Clone)]
 pub struct TypedEventBus {
@@ -22,10 +25,14 @@ pub struct TypedEventBus {
     handlers: Arc<RwLock<HashMap<TypeId, Box<dyn AnyHandlerCollection + Send + Sync>>>>,
     /// イベント履歴（オプション）
     event_history: Arc<RwLock<Vec<EventData>>>,
+    /// 型ごとのイベント履歴（型安全なアクセス用）
+    typed_event_history: Arc<RwLock<HashMap<TypeId, Vec<Box<dyn Any + Send + Sync>>>>>,
     /// 履歴の最大サイズ
     max_history_size: usize,
     /// デバッグモード
     debug: bool,
+    /// グローバルプロセッサ（全てのイベントに対して呼び出される）
+    global_processors: Arc<RwLock<Vec<GlobalProcessor>>>,
 }
 
 impl TypedEventBus {
@@ -34,8 +41,10 @@ impl TypedEventBus {
         Self {
             handlers: Arc::new(RwLock::new(HashMap::new())),
             event_history: Arc::new(RwLock::new(Vec::new())),
+            typed_event_history: Arc::new(RwLock::new(HashMap::new())),
             max_history_size: 100,
             debug: false,
+            global_processors: Arc::new(RwLock::new(Vec::new())),
         }
     }
     
@@ -101,6 +110,20 @@ impl TypedEventBus {
     pub fn publish<E: TypedEvent>(&self, event: E) {
         let type_id = TypeId::of::<E>();
         
+        // タイプ別のイベント履歴に追加
+        if self.debug {
+            let mut typed_history = self.typed_event_history.write().unwrap();
+            let history_entry = typed_history.entry(type_id).or_insert_with(Vec::new);
+            
+            // 最大サイズを超えたら古いものを削除
+            if history_entry.len() >= self.max_history_size {
+                history_entry.remove(0);
+            }
+            
+            // Anyとして保存
+            history_entry.push(Box::new(event.clone()));
+        }
+        
         // イベント履歴に追加（適切なEventDataへの変換が必要）
         if let Some(event_data) = self.convert_to_event_data(&event) {
             let mut history = self.event_history.write().unwrap();
@@ -116,7 +139,15 @@ impl TypedEventBus {
             println!("イベント発行: {} ({:?})", E::type_name(), event);
         }
         
-        // ハンドラを取得して呼び出し
+        // グローバルプロセッサを実行
+        {
+            let global_processors = self.global_processors.read().unwrap();
+            for processor in &*global_processors {
+                processor(&event as &dyn Any);
+            }
+        }
+        
+        // 型固有のハンドラを取得して呼び出し
         let handlers = self.handlers.read().unwrap();
         if let Some(handler_collection) = handlers.get(&type_id) {
             handler_collection.handle_any(&event as &dyn Any);
@@ -129,10 +160,75 @@ impl TypedEventBus {
         history.clone()
     }
     
+    /// 特定の型のイベント履歴を取得
+    pub fn get_event_history_by_type<E: TypedEvent>(&self) -> Vec<E> {
+        let type_id = TypeId::of::<E>();
+        let typed_history = self.typed_event_history.read().unwrap();
+        
+        match typed_history.get(&type_id) {
+            Some(history) => {
+                history.iter()
+                    .filter_map(|event| {
+                        event.downcast_ref::<E>().map(|e| e.clone())
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        }
+    }
+    
+    /// 特定の型の最後のイベントを取得
+    pub fn get_last_event<E: TypedEvent>(&self) -> Option<E> {
+        let type_id = TypeId::of::<E>();
+        let typed_history = self.typed_event_history.read().unwrap();
+        
+        typed_history.get(&type_id)
+            .and_then(|history| {
+                history.last().and_then(|event| {
+                    event.downcast_ref::<E>().map(|e| e.clone())
+                })
+            })
+    }
+    
+    /// 特定の型の特定のタイムスタンプ以降のイベントを取得
+    pub fn get_events_by_type_since<E: TypedEvent>(&self, timestamp: u64) -> Vec<E> {
+        let type_id = TypeId::of::<E>();
+        let typed_history = self.typed_event_history.read().unwrap();
+        
+        match typed_history.get(&type_id) {
+            Some(history) => {
+                history.iter()
+                    .filter_map(|event| {
+                        event.downcast_ref::<E>().map(|e| {
+                            if e.timestamp() >= timestamp {
+                                Some(e.clone())
+                            } else {
+                                None
+                            }
+                        }).flatten()
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        }
+    }
+    
+    /// グローバルプロセッサを追加
+    pub fn add_global_processor<F>(&self, processor: F)
+    where
+        F: Fn(&dyn Any) + Send + Sync + 'static,
+    {
+        let mut global_processors = self.global_processors.write().unwrap();
+        global_processors.push(Box::new(processor));
+    }
+    
     /// イベント履歴をクリア
     pub fn clear_history(&self) {
         let mut history = self.event_history.write().unwrap();
         history.clear();
+        
+        let mut typed_history = self.typed_event_history.write().unwrap();
+        typed_history.clear();
     }
     
     /// イベントをEventDataに変換（内部実装用）
@@ -209,19 +305,36 @@ impl TypedEventBus {
                     .map(|e| EventData::GameProgress(e.clone()))
             }
             
-            // その他のイベント型を必要に応じて追加
-            // デバッグモードの場合はマッピングされなかった型を出力
-            _ => {
-                if self.debug {
-                    println!("警告: EventDataへの変換が未実装の型: {}", type_name);
-                    println!("ヒント: イベント型に to_event_data() メソッドを実装してください");
-                }
-                None
+            // 入力イベント
+            "multiplay_minesweeper::events::input_events::MouseMoveEvent" => {
+                event.as_any().downcast_ref::<crate::events::input_events::MouseMoveEvent>()
+                    .map(|e| EventData::MouseMove(e.clone()))
             }
+            "multiplay_minesweeper::events::input_events::MouseClickEvent" => {
+                event.as_any().downcast_ref::<crate::events::input_events::MouseClickEvent>()
+                    .map(|e| EventData::MouseClick(e.clone()))
+            }
+            "multiplay_minesweeper::events::input_events::KeyboardEvent" => {
+                event.as_any().downcast_ref::<crate::events::input_events::KeyboardEvent>()
+                    .map(|e| EventData::Keyboard(e.clone()))
+            }
+            "multiplay_minesweeper::events::input_events::UIClickEvent" => {
+                event.as_any().downcast_ref::<crate::events::input_events::UIClickEvent>()
+                    .map(|e| EventData::UIClick(e.clone()))
+            }
+            "multiplay_minesweeper::events::input_events::HotkeyEvent" => {
+                event.as_any().downcast_ref::<crate::events::input_events::HotkeyEvent>()
+                    .map(|e| EventData::Hotkey(e.clone()))
+            }
+            
+            // ネットワークイベント
+            // ... 他のイベント ...
+            
+            _ => None,
         }
     }
     
-    /// 特定のイベント型に対するハンドラ数を取得
+    /// 登録されているハンドラの数を取得
     pub fn handler_count<E: TypedEvent>(&self) -> usize {
         let type_id = TypeId::of::<E>();
         let handlers = self.handlers.read().unwrap();
@@ -231,42 +344,38 @@ impl TypedEventBus {
             .unwrap_or(0)
     }
     
-    /// すべてのハンドラを削除
+    /// すべてのハンドラをクリア
     pub fn clear_handlers(&self) {
         let mut handlers = self.handlers.write().unwrap();
-        for (_, handler_collection) in handlers.iter_mut() {
-            handler_collection.clear();
-        }
+        handlers.clear();
+        
+        let mut global_processors = self.global_processors.write().unwrap();
+        global_processors.clear();
         
         if self.debug {
             println!("すべてのハンドラがクリアされました");
         }
     }
     
-    /// 型付きハンドラコレクションへのダウンキャスト（内部メソッド）
+    /// ハンドラコレクションをダウンキャスト（内部実装用）
     fn downcast_handler_collection<'a, E: TypedEvent>(
         &self,
         collection: &'a mut Box<dyn AnyHandlerCollection + Send + Sync>,
     ) -> Option<&'a mut TypedHandlerCollection<E>> {
-        // AnyHandlerCollectionはdyn Anyをimplementしているため、
-        // 直接ダウンキャストできるようにする
-        let collection_ref = collection.as_any_mut();
-        collection_ref.downcast_mut::<TypedHandlerCollection<E>>()
+        collection.as_any_mut().downcast_mut::<TypedHandlerCollection<E>>()
     }
 }
 
 impl Debug for TypedEventBus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let handlers = self.handlers.read().unwrap();
-        let handler_count: usize = handlers.values().map(|v| v.len()).sum();
+        let handler_count = handlers.len();
         
-        f.debug_struct("TypedEventBus")
-            .field("handler_count", &handler_count)
-            .field("type_count", &handlers.len())
-            .field("history_size", &self.event_history.read().unwrap().len())
-            .field("max_history_size", &self.max_history_size)
-            .field("debug_mode", &self.debug)
-            .finish()
+        let history = self.event_history.read().unwrap();
+        let history_count = history.len();
+        
+        write!(f, "TypedEventBus {{ handlers: {}, history: {}, debug: {} }}",
+            handler_count, history_count, self.debug)
     }
 }
 

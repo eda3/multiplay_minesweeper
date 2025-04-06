@@ -10,16 +10,20 @@ use std::collections::VecDeque;
 use crate::resources::{ResourceManager, BoardResource, GameStateResource};
 use crate::events::board_events::{
     CellRevealedEvent, MultipleCellsRevealedEvent, MineExplodedEvent,
-    GameProgressEvent
+    GameProgressEvent, BulkCellStateChangeEvent
 };
 use crate::events::game_events::{GameEndEvent, GameStateChangeEvent, GameState};
+use crate::events::input_events::MouseClickEvent;
+use crate::events::typed_event::TypedEvent;
+use crate::events::TypedEventBus;
+use crate::events::EventData;
 use crate::models::cell::CellValue;
 use crate::models::coordinate::Coordinate;
-use crate::systems::{TypedEventSystemTrait, TypedEventSystem};
+use crate::systems::typed_event_system_trait::{TypedEventSystemTrait, TypedEventSystem};
 use crate::ecs::system::System;
-use crate::system::system_registry::SystemPhase;
 use crate::ecs::system::SystemResult;
-use crate::events::input_events::MouseClickEvent;
+use crate::entities::EntityManager;
+use crate::board::Board;
 
 /// 型安全なセル公開システム
 pub struct TypedCellRevealSystem {
@@ -29,6 +33,8 @@ pub struct TypedCellRevealSystem {
     event_system: TypedEventSystem,
     /// イベントハンドラの初期化済みフラグ
     initialized: bool,
+    /// システムが有効かどうか
+    enabled: bool,
 }
 
 impl TypedCellRevealSystem {
@@ -38,6 +44,7 @@ impl TypedCellRevealSystem {
             name: "TypedCellRevealSystem".to_string(),
             event_system: TypedEventSystem::new(),
             initialized: false,
+            enabled: true,
         }
     }
     
@@ -47,37 +54,47 @@ impl TypedCellRevealSystem {
             return;
         }
         
+        /* 一時的にWASM環境のコードをコメントアウト
         // スレッド安全にするために参照を持つ代わりに、システム自体をクローンせず、
         // WASM環境に適したコールバックにする
         #[cfg(target_arch = "wasm32")]
         {
             // WASM向け実装（スレッド安全制約を回避）
             let system_name = self.name.clone();
+            let system_name_arc = Arc::new(system_name.clone());
+            
+            // スレッド安全なクロージャを作成するためにArcを使用
             self.subscribe_typed_event::<MouseClickEvent, _>(
                 "MouseClick",
                 "CellRevealHandler",
                 move |event| {
                     // ここではコールバック内でリソースを使わない
                     // 実際にはフラグを設定して別の方法で処理する必要がある
+                    let name = system_name_arc.clone();
                     web_sys::console::log_1(&format!("[{}] マウスクリック: ({}, {})",
-                        system_name, event.x, event.y).into());
+                        name, event.x, event.y).into());
                 },
                 resources
             );
             
             let system_name = self.name.clone();
+            let system_name_arc = Arc::new(system_name.clone());
+            
             self.subscribe_typed_event::<CellRevealedEvent, _>(
                 "CellRevealed",
                 "RevealHandler",
                 move |event| {
                     // ここではコールバック内でリソースを使わない
+                    let name = system_name_arc.clone();
                     web_sys::console::log_1(&format!("[{}] セル公開: ({}, {})",
-                        system_name, event.coord.row, event.coord.col).into());
+                        name, event.coord.row, event.coord.col).into());
                 },
                 resources
             );
         }
+        */
         
+        /* 一時的に非WASM環境のコードもコメントアウト
         #[cfg(not(target_arch = "wasm32"))]
         {
             // 非WASM環境向け（通常の実装）
@@ -101,6 +118,7 @@ impl TypedCellRevealSystem {
                 resources
             );
         }
+        */
         
         self.initialized = true;
     }
@@ -144,33 +162,61 @@ impl TypedCellRevealSystem {
     }
     
     /// セル公開イベントの処理
-    fn handle_cell_revealed(&self, event: &CellRevealedEvent, resources: &mut ResourceManager) {
+    fn handle_cell_revealed(&self, event: &CellRevealedEvent, resources: &ResourceManager) {
+        // レイトゲーム実装
+        // 連鎖反応時の特別な処理をここに実装
+        self.handle_event(event, resources);
+    }
+    
+    /// イベント処理の共通メソッド
+    fn handle_event(&self, event: &CellRevealedEvent, resources: &ResourceManager) {
         // ボードリソースの取得
-        let board_rc = match resources.get_mut::<BoardResource>() {
-            Ok(rc) => rc,
-            Err(_) => return,
-        };
-        
-        let mut board = board_rc.borrow_mut();
-        if let Some(board) = board.downcast_mut::<BoardResource>() {
-            // 既にゲームオーバーなら何もしない
-            if board.game_over || board.win {
-                return;
+        if let Ok(board_rc) = resources.get::<BoardResource>() {
+            let mut board = board_rc.borrow_mut();
+            if let Some(board) = board.downcast_mut::<BoardResource>() {
+                // 座標の取得
+                let row = event.coord.row as usize;
+                let col = event.coord.col as usize;
+                
+                // 境界チェック
+                if row >= board.height || col >= board.width {
+                    return;
+                }
+                
+                // インデックスの計算
+                let index = row * board.width + col;
+                
+                // 既に公開済みならスキップ
+                if board.revealed[index] {
+                    return;
+                }
+                
+                // セルを公開
+                board.revealed[index] = true;
+                
+                // セルの値に応じた処理
+                match board.cells[index] {
+                    CellValue::Mine => {
+                        // 地雷だった場合、ゲームオーバー
+                        board.game_over = true;
+                        
+                        // 地雷爆発イベントを発行（別メソッドで実装）
+                    },
+                    CellValue::Empty(0) => {
+                        // 空セルの場合、周囲のセルも公開
+                        self.reveal_connected_cells_optimized(row, col, board, resources);
+                    },
+                    _ => {
+                        // 通常の数字セルの場合は特に何もしない
+                    }
+                }
+                
+                // 勝利条件チェック
+                self.check_win_condition(board, resources);
+                
+                // ゲーム進行状況の更新
+                self.update_game_progress(board, resources);
             }
-            
-            // ChainReactionでない場合、単一セルの処理のみ
-            if !event.is_chain {
-                // 既に処理済みなのでスキップ
-                return;
-            }
-            
-            // チェーン反応の場合、周囲のセルも公開
-            self.reveal_connected_cells_optimized(
-                event.coord.row as usize,
-                event.coord.col as usize,
-                board,
-                resources
-            );
         }
     }
     
@@ -415,6 +461,7 @@ impl Clone for TypedCellRevealSystem {
             name: self.name.clone(),
             event_system: TypedEventSystem::new(),
             initialized: self.initialized,
+            enabled: self.enabled,
         }
     }
 }
@@ -426,24 +473,45 @@ impl Default for TypedCellRevealSystem {
 }
 
 impl System for TypedCellRevealSystem {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    
-    fn update(&mut self, _entity_manager: &mut crate::entities::EntityManager, resources: &mut ResourceManager) -> SystemResult {
-        // イベントハンドラの初期化
-        self.initialize_handlers(resources);
-        
-        // 実際の処理はイベントハンドラで行われるので、ここでは何もしない
-        // ただし、WASMビルドでは特別な対応が必要かもしれない
-        #[cfg(target_arch = "wasm32")]
-        {
-            // WASM環境ではイベントハンドラがリソースを直接使えないため、
-            // ここでイベントキューをチェックして処理する
-            // イベントキューのチェックロジックをここに実装
+    fn update(&mut self, entity_manager: &mut EntityManager, resources: &mut ResourceManager) -> SystemResult {
+        // イベントバスからCellRevealedEventを取得して処理
+        if let Ok(event_bus_rc) = resources.get::<TypedEventBus>() {
+            let event_bus = event_bus_rc.borrow();
+            if let Some(event_bus) = event_bus.downcast_ref::<TypedEventBus>() {
+                // イベント履歴を取得
+                let reveal_events = event_bus.get_event_history_by_type::<CellRevealedEvent>();
+                
+                // 最後に受信したイベントのみを処理（既に処理済みのイベントを再処理しないため）
+                if let Some(event) = reveal_events.last() {
+                    // 連鎖反応イベントでないものは、オリジナルのシステムが処理
+                    if !event.is_chain {
+                        // 直接イベントを処理
+                        self.handle_event(event, resources);
+                    } else {
+                        // 連鎖反応イベントは専用のハンドラで処理
+                        // システム自身への参照を取得
+                        let system_ref = self.clone();
+                        
+                        // 連鎖反応処理用の可変リソース参照を渡す
+                        system_ref.handle_cell_revealed(event, resources);
+                    }
+                }
+            }
         }
         
         SystemResult::Ok
+    }
+    
+    fn name(&self) -> &str {
+        "TypedCellRevealSystem"
+    }
+    
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+    
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
     }
 }
 

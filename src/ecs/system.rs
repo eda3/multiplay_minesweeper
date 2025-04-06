@@ -38,4 +38,14 @@ pub trait System: Send + Sync + 'static {
     fn name(&self) -> &str {
         "UnnamedSystem"
     }
+    
+    /// システムが有効かどうかを取得（オプション）
+    fn enabled(&self) -> bool {
+        true
+    }
+    
+    /// システムの有効/無効を設定（オプション）
+    fn set_enabled(&mut self, _enabled: bool) {
+        // デフォルト実装では何もしない
+    }
 } 
