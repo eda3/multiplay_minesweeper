@@ -671,6 +671,27 @@ impl ResourceManager {
         }
     }
     
+    /// リソースを可変で取得（互換性レイヤー用）
+    pub fn get_resource_mut<R: Resource + 'static>(&mut self, _name: &str) -> Option<&mut R> {
+        if let Some(entry) = self.resources.get_mut(&TypeId::of::<R>()) {
+            // ResourceEntryから直接R型への参照を取得
+            let any_ref = &mut *entry.resource.borrow_mut();
+            if let Some(res) = any_ref.downcast_mut::<R>() {
+                // 所有権問題を回避するため、参照返還のライフタイムを制御
+                unsafe {
+                    let ptr = res as *mut R;
+                    return Some(&mut *ptr);
+                }
+            }
+        }
+        None
+    }
+    
+    /// リソースを可変で取得（名前なし、wasm互換性用）
+    pub fn get_resource_mut_unnamed<R: Resource + 'static>(&mut self) -> Option<&mut R> {
+        self.get_resource_mut::<R>("")
+    }
+    
     /// リソースを削除（名前付き、互換性用）
     pub fn remove_resource(&mut self, _name: &str) -> bool {
         // 名前が無視されるため、この互換性レイヤーは完全ではない
