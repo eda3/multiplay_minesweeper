@@ -480,7 +480,7 @@ impl TypedEventBus {
             }
             "multiplay_minesweeper::events::input_events::KeyboardEvent" => {
                 event.as_any().downcast_ref::<crate::events::input_events::KeyboardEvent>()
-                    .map(|e| EventData::Keyboard(e.clone()))
+                    .map(|e| EventData::KeyboardInput(e.clone()))
             }
             "multiplay_minesweeper::events::input_events::UIClickEvent" => {
                 event.as_any().downcast_ref::<crate::events::input_events::UIClickEvent>()

@@ -76,16 +76,46 @@ pub struct HotkeyEvent {
     pub action: String,
 }
 
+/// リソース読み込みイベント - リソースの読み込みを表す
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceLoadEvent {
+    /// リソースタイプ
+    pub resource_type: String,
+    /// リソースID
+    pub resource_id: String,
+    /// 読み込み成功したかどうか
+    pub is_success: bool,
+    /// エラーメッセージ
+    pub error_message: Option<String>,
+    /// タイムスタンプ
+    pub timestamp: u64,
+}
+
+/// アプリケーション状態イベント - アプリケーションの状態を表す
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppStateEvent {
+    /// 初期化完了したかどうか
+    pub is_initialized: bool,
+    /// 現在のビュー
+    pub current_view: String,
+    /// タイムスタンプ
+    pub timestamp: u64,
+}
+
 // Event実装
 impl_event!(MouseMoveEvent, "MouseMove");
 impl_event!(MouseClickEvent, "MouseClick");
-impl_event!(KeyboardEvent, "Keyboard");
+impl_event!(KeyboardEvent, "KeyboardInput");
 impl_event!(UIClickEvent, "UIClick");
 impl_event!(HotkeyEvent, "Hotkey");
+impl_event!(ResourceLoadEvent, "ResourceLoad");
+impl_event!(AppStateEvent, "AppState");
 
 // TypedEvent実装
 impl_typed_event!(MouseMoveEvent);
 impl_typed_event!(MouseClickEvent);
 impl_typed_event!(KeyboardEvent);
 impl_typed_event!(UIClickEvent);
-impl_typed_event!(HotkeyEvent); 
+impl_typed_event!(HotkeyEvent);
+impl_typed_event!(ResourceLoadEvent);
+impl_typed_event!(AppStateEvent); 

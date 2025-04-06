@@ -121,6 +121,67 @@ pub struct LagMeasurementEvent {
     pub time_diff: i32,
 }
 
+// PlayerScoreUpdateEvent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerScoreUpdateEvent {
+    /// プレイヤーのID
+    pub player_id: String,
+    /// 新しいスコア
+    pub new_score: u32,
+    /// タイムスタンプ
+    pub timestamp: u64,
+}
+
+// ChatMessageEvent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessageEvent {
+    /// プレイヤーのID
+    pub player_id: String,
+    /// メッセージ
+    pub message: String,
+    /// タイムスタンプ
+    pub timestamp: u64,
+}
+
+// RoomStateEvent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomStateEvent {
+    /// ルームID
+    pub room_id: String,
+    /// プレイヤー情報
+    pub players: Vec<PlayerInfo>,
+    /// ゲーム状態
+    pub game_state: String,
+    /// タイムスタンプ
+    pub timestamp: u64,
+}
+
+// ConnectionStateEvent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionStateEvent {
+    /// 接続状態
+    pub state: String,
+    /// エラーメッセージ
+    pub error_message: Option<String>,
+    /// タイムスタンプ
+    pub timestamp: u64,
+}
+
+// プレイヤー情報構造体
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerInfo {
+    /// プレイヤーID
+    pub id: String,
+    /// プレイヤー名
+    pub name: String,
+    /// プレイヤーカラー
+    pub color: String,
+    /// プレイヤースコア
+    pub score: u32,
+    /// アクティブかどうか
+    pub is_active: bool,
+}
+
 // Event実装
 impl_event!(NetworkConnectEvent, "NetworkConnect");
 impl_event!(NetworkDisconnectEvent, "NetworkDisconnect");
@@ -132,6 +193,10 @@ impl_event!(SessionLeaveEvent, "SessionLeave");
 impl_event!(PlayerJoinedEvent, "PlayerJoined");
 impl_event!(PlayerLeftEvent, "PlayerLeft");
 impl_event!(LagMeasurementEvent, "LagMeasurement");
+impl_event!(PlayerScoreUpdateEvent, "PlayerScoreUpdate");
+impl_event!(ChatMessageEvent, "ChatMessage");
+impl_event!(RoomStateEvent, "RoomState");
+impl_event!(ConnectionStateEvent, "ConnectionState");
 
 // TypedEvent実装
 impl_typed_event!(NetworkConnectEvent);
@@ -143,4 +208,8 @@ impl_typed_event!(SessionJoinEvent);
 impl_typed_event!(SessionLeaveEvent);
 impl_typed_event!(PlayerJoinedEvent);
 impl_typed_event!(PlayerLeftEvent);
-impl_typed_event!(LagMeasurementEvent); 
+impl_typed_event!(LagMeasurementEvent);
+impl_typed_event!(PlayerScoreUpdateEvent);
+impl_typed_event!(ChatMessageEvent);
+impl_typed_event!(RoomStateEvent);
+impl_typed_event!(ConnectionStateEvent); 

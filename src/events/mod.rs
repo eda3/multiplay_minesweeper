@@ -59,7 +59,7 @@ pub enum EventData {
     // 入力イベント
     MouseMove(input_events::MouseMoveEvent),
     MouseClick(input_events::MouseClickEvent),
-    Keyboard(input_events::KeyboardEvent),
+    KeyboardInput(input_events::KeyboardEvent),
     UIClick(input_events::UIClickEvent),
     Hotkey(input_events::HotkeyEvent),
     
@@ -74,6 +74,14 @@ pub enum EventData {
     PlayerJoined(network_events::PlayerJoinedEvent),
     PlayerLeft(network_events::PlayerLeftEvent),
     LagMeasurement(network_events::LagMeasurementEvent),
+    PlayerScoreUpdate(network_events::PlayerScoreUpdateEvent),
+    ChatMessage(network_events::ChatMessageEvent),
+    RoomState(network_events::RoomStateEvent),
+    ConnectionState(network_events::ConnectionStateEvent),
+    
+    // システム関連イベント
+    ResourceLoad(input_events::ResourceLoadEvent),
+    AppState(input_events::AppStateEvent),
 }
 
 impl EventData {
@@ -101,7 +109,7 @@ impl EventData {
             // 入力イベント
             Self::MouseMove(_) => "MouseMove",
             Self::MouseClick(_) => "MouseClick",
-            Self::Keyboard(_) => "Keyboard",
+            Self::KeyboardInput(_) => "KeyboardInput",
             Self::UIClick(_) => "UIClick",
             Self::Hotkey(_) => "Hotkey",
             
@@ -116,6 +124,64 @@ impl EventData {
             Self::PlayerJoined(_) => "PlayerJoined",
             Self::PlayerLeft(_) => "PlayerLeft",
             Self::LagMeasurement(_) => "LagMeasurement",
+            Self::PlayerScoreUpdate(_) => "PlayerScoreUpdate",
+            Self::ChatMessage(_) => "ChatMessage",
+            Self::RoomState(_) => "RoomState",
+            Self::ConnectionState(_) => "ConnectionState",
+            
+            // システム関連イベント
+            Self::ResourceLoad(_) => "ResourceLoad",
+            Self::AppState(_) => "AppState",
+        }
+    }
+    
+    // タイムスタンプを取得する便利メソッドを追加
+    pub fn timestamp(&self) -> u64 {
+        match self {
+            // ゲームイベント
+            Self::GameStart(e) => e.timestamp(),
+            Self::GameEnd(e) => e.timestamp(),
+            Self::GameStateChange(e) => e.timestamp(),
+            Self::Timer(e) => e.timestamp(),
+            Self::DifficultyChange(e) => e.timestamp(),
+            Self::ScoreUpdate(e) => e.timestamp(),
+            
+            // ボードイベント
+            Self::CellStateChange(e) => e.timestamp(),
+            Self::BulkCellStateChange(e) => e.timestamp(),
+            Self::FlagPlaced(e) => e.timestamp(),
+            Self::CellRevealed(e) => e.timestamp(),
+            Self::MultipleCellsRevealed(e) => e.timestamp(),
+            Self::MineExploded(e) => e.timestamp(),
+            Self::BoardInitialized(e) => e.timestamp(),
+            Self::GameProgress(e) => e.timestamp(),
+            
+            // 入力イベント
+            Self::MouseMove(e) => e.timestamp(),
+            Self::MouseClick(e) => e.timestamp(),
+            Self::KeyboardInput(e) => e.timestamp(),
+            Self::UIClick(e) => e.timestamp(),
+            Self::Hotkey(e) => e.timestamp(),
+            
+            // ネットワークイベント
+            Self::NetworkConnect(e) => e.timestamp(),
+            Self::NetworkDisconnect(e) => e.timestamp(),
+            Self::NetworkError(e) => e.timestamp(),
+            Self::DataReceived(e) => e.timestamp(),
+            Self::DataSent(e) => e.timestamp(),
+            Self::SessionJoin(e) => e.timestamp(),
+            Self::SessionLeave(e) => e.timestamp(),
+            Self::PlayerJoined(e) => e.timestamp(),
+            Self::PlayerLeft(e) => e.timestamp(),
+            Self::LagMeasurement(e) => e.timestamp(),
+            Self::PlayerScoreUpdate(e) => e.timestamp(),
+            Self::ChatMessage(e) => e.timestamp(),
+            Self::RoomState(e) => e.timestamp(),
+            Self::ConnectionState(e) => e.timestamp(),
+            
+            // システム関連イベント
+            Self::ResourceLoad(e) => e.timestamp(),
+            Self::AppState(e) => e.timestamp(),
         }
     }
 }
