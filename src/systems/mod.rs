@@ -6,42 +6,42 @@
 
 // エクスポートするサブモジュール
 pub mod system_registry;
-// pub mod system_manager; // 未実装
 pub mod event_system_trait;
-pub mod typed_event_system_trait; // 新しい型安全なイベントシステムトレイト
+pub mod typed_event_system_trait;
 pub mod base_event_system;
 
 // 機能別システムのサブモジュール
 pub mod board_systems;
 pub mod input_systems;
-// pub mod ui_systems; // 未実装
-// pub mod game_systems; // 未実装
-// pub mod network_systems; // 未実装
-// pub mod util_systems; // 未実装
+pub mod render_system;
+pub mod board_system;
+pub mod network_system;
+pub mod ui_system;
+pub mod update_system;
+pub mod input_system;
 
-// プレイヤー関連システム
-// pub mod player_systems; // 未実装
+// WASM向け設定
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
-// AI関連システム
-// pub mod ai_systems; // 未実装
-
-// ユーティリティ関連システム
-// pub mod utility_systems; // 未実装
-
-// システムマネージャーとレジストリの再エクスポート
-// pub use system_manager::SystemManager; // 未実装
-pub use system_registry::SystemRegistry;
-pub use crate::system::system_registry::SystemPhase;
-pub use crate::system::SystemDefinition;
+// システムレジストリの再エクスポート
+pub use system_registry::{SystemRegistry, SystemPriority, DeltaTime};
 pub use crate::ecs::system::System;
 
 // イベントシステムの再エクスポート
 pub use event_system_trait::{EventSystemTrait, EventSystem};
-pub use typed_event_system_trait::{TypedEventSystemTrait, TypedEventSystem}; // 型安全なイベントシステム
+pub use typed_event_system_trait::{TypedEventSystemTrait, TypedEventSystem};
 pub use base_event_system::{BaseEventSystem, EventQueue, EventRequest, EventProcessingState};
 
-// 入力システムの型の再エクスポート
+// 入力システムの型とコンポーネントの再エクスポート
 pub use input_systems::{MouseButton, InputEventType, InputEvent};
+pub use input_systems::{
+    InputCollectionSystem,
+    InputProcessingSystem,
+    UIInputSystem,
+    GameplayInputSystem,
+    board_click_system::BoardClickSystem
+};
 
 /**
  * システムの初期化関数
@@ -51,6 +51,10 @@ pub fn init() -> SystemRegistry {
     
     // プリセットのシステムを登録
     board_systems::register_board_systems(&mut system_registry);
+    
+    // 新しい入力システムの登録
+    // system_registry.register_system("UIInputSystem", UIInputSystem::new(), SystemPriority::Input);
+    // system_registry.register_system("GameplayInputSystem", GameplayInputSystem::new(), SystemPriority::Input);
     
     system_registry
 } 
