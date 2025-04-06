@@ -4,7 +4,15 @@
  * ゲーム全体のリソースを管理するクラス。
  * 型安全なリソース管理と、バッチ処理によるパフォーマンス最適化を提供します。
  * 
- * # 使用例
+ * # 機能概要
+ * 
+ * - **型安全なリソース管理**: 各リソースを型によって一意に識別し、安全にアクセス
+ * - **ライフサイクル管理**: リソースの初期化と終了処理を依存関係に基づき自動化
+ * - **依存関係解決**: リソース間の依存関係に基づいて初期化順序を制御
+ * - **バッチ処理**: 複数のリソースへの同時アクセスを簡潔かつ安全に実現
+ * - **高レベルAPI**: リソース取得のための様々な便利なヘルパーメソッドを提供
+ * 
+ * # 基本的な使い方
  * 
  * ```rust
  * // リソースの追加
@@ -15,24 +23,56 @@
  * // リソースの取得と使用
  * if let Ok(rc) = manager.get::<GameConfigResource>() {
  *     let config = rc.borrow();
- *     println!("難易度: {}", config.difficulty());
+ *     println!("難易度: {}", config.difficulty);
+ * }
+ * ```
+ * 
+ * # 複数リソースの安全な取得
+ * 
+ * ResourceManagerは複数のリソースに同時にアクセスするための様々な方法を提供します。
+ * 
+ * ## バッチ処理によるアクセス
+ * 
+ * ```rust
+ * // 複数リソースへの読み取りアクセス
+ * manager.batch(|batch| {
+ *     // 複数リソースを一度に取得
+ *     if let Some((config, board)) = batch.get_many::<GameConfigResource, BoardResource>() {
+ *         // 両方のリソースを使った処理
+ *         println!("難易度: {}, ボードサイズ: {}x{}", config.difficulty, board.width, board.height);
+ *     }
+ * });
+ * 
+ * // 複数リソースへの更新アクセス
+ * manager.batch_mut(|batch| {
+ *     // 1つのリソースは読み取り専用、もう1つは可変で取得
+ *     if let Some((config, board)) = batch.get_many_mut::<GameConfigResource, BoardResource>() {
+ *         // configを参照しながらboardを更新
+ *         board.generate(config.difficulty);
+ *     }
+ *     
+ *     // 3つのリソースを取得（3つ目のみ可変）
+ *     if let Some((config, input, player)) = batch.get_many3_mut::<GameConfigResource, InputResource, PlayerResource>() {
+ *         player.update(config, input);
+ *     }
+ * });
+ * ```
+ * 
+ * ## 直接アクセス
+ * 
+ * get_allシリーズのメソッドを使用すると、バッチ処理を使わずに複数のリソースに直接アクセスできます。
+ * 
+ * ```rust
+ * // 2つのリソースを読み取り専用で取得
+ * if let Some((config, board)) = manager.get_all::<GameConfigResource, BoardResource>() {
+ *     // configとboardを直接使用
  * }
  * 
- * // 複数リソースへのアクセス（バッチ処理）
- * manager.batch(|batch| {
- *     if let Ok(config_rc) = batch.get_by_type::<GameConfigResource>() {
- *         let config = config_rc.borrow();
- *         // 設定を使った処理
- *     }
- * });
- * 
- * // 複数リソースの更新（バッチ処理）
- * manager.batch_mut(|batch| {
- *     if let Ok(board_rc) = batch.get_by_type::<BoardResource>() {
- *         let mut board = board_rc.borrow_mut();
- *         // ボードの更新
- *     }
- * });
+ * // 3つのリソースを取得（最初の2つは読み取り専用、3つ目は可変）
+ * if let Some((config, input, player)) = manager.get_all3_mut::<GameConfigResource, InputResource, PlayerResource>() {
+ *     // configとinputを参照しながらplayerを更新
+ *     player.update_position(input.direction, config.speed);
+ * }
  * ```
  */
 use std::any::{Any, TypeId};
@@ -840,6 +880,231 @@ impl ResourceManager {
         // 基本的には get_many3 と同じ実装ですが、
         // 呼び出し側で2つ目と3つ目を可変として扱う意図を示すためのメソッドです
         self.get_many3::<A, B, C>()
+    }
+    
+    //
+    // 高レベルヘルパーメソッド
+    //
+    
+    /// 2つのリソースの値を直接取得（読み取り専用）
+    /// 
+    /// `get_many`とは異なり、このメソッドはラップされていないリソース値を直接返します。
+    /// これにより、RefCellの借用やdowncastの処理を手動で行わなくても、
+    /// リソースに直接アクセスできるようになります。
+    /// 
+    /// ## 利点
+    /// - コードが簡潔になる（RefCellのborrow/borrow_mutやdowncast_refが不要）
+    /// - 型安全性が保証される（正しい型のリソースのみを取得可能）
+    /// - 複数のリソースを同時に安全に取得できる
+    /// 
+    /// ## 注意点
+    /// - 内部で`unsafe`コードを使用している（ライフタイム管理のため）
+    /// - 同じ型のリソースを同時に取得することはできない
+    /// - Worldクラスの`get_resources`と似ていますが、APIが異なる（World経由の場合は`with_resources`を使用）
+    /// 
+    /// # 例
+    /// ```
+    /// let (config, board) = resource_manager.get_all::<ConfigResource, BoardResource>()?;
+    /// // config と board に直接アクセスできる
+    /// println!("難易度: {}, サイズ: {}x{}", config.difficulty, board.width, board.height);
+    /// ```
+    pub fn get_all<A: Resource, B: Resource>(&self) -> Option<(&A, &B)> {
+        // ラップされたリソースを取得
+        let (a_rc, b_rc) = self.get_many::<A, B>()?;
+        
+        // 参照を取得
+        let a = a_rc.borrow();
+        let b = b_rc.borrow();
+        
+        // ダウンキャスト
+        let a_ref = a.downcast_ref::<A>()?;
+        let b_ref = b.downcast_ref::<B>()?;
+        
+        // ライフタイム変換（安全でない操作）
+        unsafe {
+            Some((
+                std::mem::transmute::<&A, &A>(a_ref),
+                std::mem::transmute::<&B, &B>(b_ref)
+            ))
+        }
+    }
+    
+    /// 2つのリソースの値を直接取得（1つが可変）
+    /// 
+    /// `get_many_mut`とは異なり、このメソッドはラップされていないリソース値を直接返します。
+    /// 2つ目のリソースを可変参照として返すため、そのリソースを安全に更新できます。
+    /// 
+    /// ## 利点
+    /// - コードが簡潔になる（RefCellのborrow/borrow_mutやdowncast_refが不要）
+    /// - 型安全性が保証される（正しい型のリソースのみを取得可能）
+    /// - 複数のリソースを同時に安全に取得でき、一部を更新可能
+    /// - 参照の競合が型システムによって防止される
+    /// 
+    /// ## 注意点
+    /// - 内部で`unsafe`コードを使用している（ライフタイム管理のため）
+    /// - 同じ型のリソースを同時に取得することはできない
+    /// - システム内で更新するリソースを明示的に示すため、意図が明確になる
+    /// 
+    /// # 例
+    /// ```
+    /// let (config, board) = resource_manager.get_all_mut::<ConfigResource, BoardResource>()?;
+    /// // config は読み取り専用、board は可変として使用できる
+    /// board.generate(config.difficulty); // configを参照しながらboardを更新
+    /// ```
+    pub fn get_all_mut<A: Resource, B: Resource>(&self) -> Option<(&A, &mut B)> {
+        // ラップされたリソースを取得
+        let (a_rc, b_rc) = self.get_many_mut::<A, B>()?;
+        
+        // 参照を取得（2つ目は可変）
+        let a = a_rc.borrow();
+        let mut b = b_rc.borrow_mut();
+        
+        // ダウンキャスト
+        let a_ref = a.downcast_ref::<A>()?;
+        let b_ref = b.downcast_mut::<B>()?;
+        
+        // ライフタイム変換（安全でない操作）
+        unsafe {
+            Some((
+                std::mem::transmute::<&A, &A>(a_ref),
+                std::mem::transmute::<&mut B, &mut B>(b_ref)
+            ))
+        }
+    }
+    
+    /// 3つのリソースの値を直接取得（読み取り専用）
+    /// 
+    /// `get_many3`とは異なり、このメソッドはラップされていないリソース値を直接返します。
+    /// これにより、3つの異なるリソースに同時に安全にアクセスできます。
+    /// 
+    /// ## 利点
+    /// - 3つのリソースを一度に安全に取得できる
+    /// - コードの記述量が減り、可読性が向上する
+    /// - 型安全性が保証される
+    /// 
+    /// ## 注意点
+    /// - 内部で`unsafe`コードを使用している（ライフタイム管理のため）
+    /// - 同じ型のリソースを同時に取得することはできない
+    /// - システムの依存関係がより明確になる
+    /// 
+    /// # 例
+    /// ```
+    /// let (config, board, player) = resource_manager.get_all3::<ConfigResource, BoardResource, PlayerResource>()?;
+    /// // 3つのリソースに直接アクセスできる
+    /// render_game(config, board, player); // 3つのリソースを使った処理
+    /// ```
+    pub fn get_all3<A: Resource, B: Resource, C: Resource>(&self) -> Option<(&A, &B, &C)> {
+        // ラップされたリソースを取得
+        let (a_rc, b_rc, c_rc) = self.get_many3::<A, B, C>()?;
+        
+        // 参照を取得
+        let a = a_rc.borrow();
+        let b = b_rc.borrow();
+        let c = c_rc.borrow();
+        
+        // ダウンキャスト
+        let a_ref = a.downcast_ref::<A>()?;
+        let b_ref = b.downcast_ref::<B>()?;
+        let c_ref = c.downcast_ref::<C>()?;
+        
+        // ライフタイム変換（安全でない操作）
+        unsafe {
+            Some((
+                std::mem::transmute::<&A, &A>(a_ref),
+                std::mem::transmute::<&B, &B>(b_ref),
+                std::mem::transmute::<&C, &C>(c_ref)
+            ))
+        }
+    }
+    
+    /// 3つのリソースの値を直接取得（3つ目が可変）
+    /// 
+    /// `get_many3_mut`とは異なり、このメソッドはラップされていないリソース値を直接返します。
+    /// 3つ目のリソースを可変参照として返すため、そのリソースを安全に更新できます。
+    /// 
+    /// ## 利点
+    /// - 最初の2つのリソースを参照しながら、3つ目のリソースを更新できる
+    /// - システムの依存関係が明確になる（どのリソースが読み取り専用で、どのリソースが更新されるか）
+    /// - 型安全性と参照の競合が防止される
+    /// 
+    /// ## 典型的なユースケース
+    /// - 設定リソースとゲーム状態を参照しながら、プレイヤーリソースを更新する
+    /// - 入力とゲーム設定に基づいて、ボードの状態を更新する
+    /// 
+    /// # 例
+    /// ```
+    /// let (config, input, player) = resource_manager.get_all3_mut::<ConfigResource, InputResource, PlayerResource>()?;
+    /// // config と input は読み取り専用、player は可変として使用できる
+    /// player.update_position(input.direction, config.player_speed);
+    /// ```
+    pub fn get_all3_mut<A: Resource, B: Resource, C: Resource>(&self) -> Option<(&A, &B, &mut C)> {
+        // ラップされたリソースを取得
+        let (a_rc, b_rc, c_rc) = self.get_many3_mut::<A, B, C>()?;
+        
+        // 参照を取得（3つ目は可変）
+        let a = a_rc.borrow();
+        let b = b_rc.borrow();
+        let mut c = c_rc.borrow_mut();
+        
+        // ダウンキャスト
+        let a_ref = a.downcast_ref::<A>()?;
+        let b_ref = b.downcast_ref::<B>()?;
+        let c_ref = c.downcast_mut::<C>()?;
+        
+        // ライフタイム変換（安全でない操作）
+        unsafe {
+            Some((
+                std::mem::transmute::<&A, &A>(a_ref),
+                std::mem::transmute::<&B, &B>(b_ref),
+                std::mem::transmute::<&mut C, &mut C>(c_ref)
+            ))
+        }
+    }
+    
+    /// 3つのリソースの値を直接取得（2つ目と3つ目が可変）
+    /// 
+    /// `get_many3_mut2`とは異なり、このメソッドはラップされていないリソース値を直接返します。
+    /// 2つ目と3つ目のリソースを可変参照として返すため、それらを安全に更新できます。
+    /// 
+    /// ## 利点
+    /// - 最初のリソースを参照しながら、2つのリソースを同時に更新できる
+    /// - 複雑なシステムの更新ロジックに適している
+    /// - 型安全性と参照の競合が防止される
+    /// 
+    /// ## 典型的なユースケース
+    /// - 設定に基づいて、ゲーム状態とプレイヤー状態を同時に更新する
+    /// - ゲームルールを参照しながら、ボードとスコアを更新する
+    /// 
+    /// # 例
+    /// ```
+    /// let (config, board, player) = resource_manager.get_all3_mut2::<ConfigResource, BoardResource, PlayerResource>()?;
+    /// // config は読み取り専用、board と player は可変として使用できる
+    /// // 設定を参照しながら、ボードとプレイヤーの両方を更新
+    /// board.regenerate(config.difficulty);
+    /// player.reset_position(config.start_position);
+    /// ```
+    pub fn get_all3_mut2<A: Resource, B: Resource, C: Resource>(&self) -> Option<(&A, &mut B, &mut C)> {
+        // ラップされたリソースを取得
+        let (a_rc, b_rc, c_rc) = self.get_many3_mut2::<A, B, C>()?;
+        
+        // 参照を取得（2つ目と3つ目は可変）
+        let a = a_rc.borrow();
+        let mut b = b_rc.borrow_mut();
+        let mut c = c_rc.borrow_mut();
+        
+        // ダウンキャスト
+        let a_ref = a.downcast_ref::<A>()?;
+        let b_ref = b.downcast_mut::<B>()?;
+        let c_ref = c.downcast_mut::<C>()?;
+        
+        // ライフタイム変換（安全でない操作）
+        unsafe {
+            Some((
+                std::mem::transmute::<&A, &A>(a_ref),
+                std::mem::transmute::<&mut B, &mut B>(b_ref),
+                std::mem::transmute::<&mut C, &mut C>(c_ref)
+            ))
+        }
     }
 }
 

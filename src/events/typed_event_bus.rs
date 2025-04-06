@@ -1,8 +1,132 @@
 /**
- * 型付きイベントバス
+ * 型安全なイベントバスシステム
  * 
- * 型安全なイベントの発行と購読を管理する中心的なコンポーネント。
- * コンパイル時の型チェックを最大限活用し、実行時エラーを防ぐ。
+ * このモジュールはコンパイル時の型チェックを活用した安全なイベント処理システムを提供します。
+ * 従来のイベントバスと異なり、ランタイムでの型キャストエラーを排除し、コンパイル時に
+ * 型の不一致を検出します。
+ * 
+ * # 主な機能
+ * 
+ * - **型安全性**: コンパイル時の型チェックによりランタイムエラーを防止
+ * - **ジェネリックイベントハンドラ**: 型情報を保持したイベントハンドラ
+ * - **イベント履歴機能**: 型情報を保持したイベント履歴の管理
+ * - **高パフォーマンス**: 型キャストのオーバーヘッド削減
+ * - **自己文書化コード**: 型情報による明示的なイベント処理
+ * 
+ * # 基本的な使い方
+ * 
+ * ## イベントの定義
+ * 
+ * ```rust
+ * // 型安全なイベントの定義
+ * #[derive(Clone, Debug)]
+ * struct CellRevealedEvent {
+ *     pub row: usize,
+ *     pub col: usize,
+ * }
+ * 
+ * // TypedEventトレイトの実装
+ * impl TypedEvent for CellRevealedEvent {
+ *     fn event_type(&self) -> &'static str {
+ *         "CellRevealedEvent"
+ *     }
+ *     
+ *     fn to_event_data(&self) -> EventData {
+ *         EventData {
+ *             event_type: self.event_type().to_string(),
+ *             data: json!({
+ *                 "row": self.row,
+ *                 "col": self.col,
+ *             }),
+ *         }
+ *     }
+ * }
+ * 
+ * // マクロを使った簡潔な実装
+ * impl_typed_event_with_conversion!(CellRevealedEvent, "CellRevealedEvent");
+ * ```
+ * 
+ * ## イベントハンドラの登録
+ * 
+ * ```rust
+ * // 型安全なイベントハンドラの登録
+ * let mut event_bus = TypedEventBus::new();
+ * 
+ * // ジェネリックなハンドラ登録
+ * event_bus.register_handler::<CellRevealedEvent>(|event| {
+ *     println!("セルが公開されました: ({}, {})", event.row, event.col);
+ * });
+ * 
+ * // システム内でのハンドラ登録
+ * fn setup_event_handlers(world: &mut World) {
+ *     let event_bus = world.get_resource_mut::<TypedEventBusResource>().unwrap();
+ *     
+ *     event_bus.register_handler::<CellRevealedEvent>(|event| {
+ *         // 公開されたセルの処理
+ *     });
+ *     
+ *     event_bus.register_handler::<GameOverEvent>(|event| {
+ *         // ゲームオーバー処理
+ *     });
+ * }
+ * ```
+ * 
+ * ## イベントの発行
+ * 
+ * ```rust
+ * // 型安全なイベント発行
+ * event_bus.publish(CellRevealedEvent { row: 5, col: 10 });
+ * 
+ * // システム内でのイベント発行
+ * fn reveal_cell_system(world: &mut World) {
+ *     // リソースを取得
+ *     let (board, mut event_bus) = world.get_resources_mut::<BoardResource, TypedEventBusResource>()
+ *         .expect("必要なリソースが見つかりません");
+ *     
+ *     // ロジック処理...
+ *     
+ *     // イベント発行（型安全）
+ *     event_bus.publish(CellRevealedEvent { row: 5, col: 10 });
+ * }
+ * ```
+ * 
+ * ## イベント履歴の活用
+ * 
+ * ```rust
+ * // 型安全なイベント履歴へのアクセス
+ * let history = event_bus.get_history::<CellRevealedEvent>();
+ * 
+ * // 特定の型のイベント履歴を処理
+ * for event in history {
+ *     println!("過去のセル公開: ({}, {})", event.row, event.col);
+ * }
+ * 
+ * // 履歴をクリア
+ * event_bus.clear_history::<CellRevealedEvent>();
+ * ```
+ * 
+ * # 従来のEventBusとの比較
+ * 
+ * | 機能 | TypedEventBus | 従来のEventBus |
+ * |------|--------------|--------------|
+ * | 型安全性 | ✅ コンパイル時チェック | ❌ ランタイムチェック |
+ * | エラー検出 | ✅ コンパイル時 | ❌ ランタイム時 |
+ * | IDE補完 | ✅ 完全サポート | ❌ 限定的 |
+ * | パフォーマンス | ✅ 高速（型キャスト最小化） | ❌ 低速（頻繁な型キャスト） |
+ * | メモリ効率 | ✅ 高効率 | ❌ 非効率的 |
+ * | コード量 | ✅ 少ない（マクロ活用） | ❌ 多い |
+ * | イベント履歴 | ✅ 型情報あり | ❌ 型情報なし |
+ * 
+ * # 型安全性の仕組み
+ * 
+ * TypedEventBusは以下の仕組みで型安全性を実現しています：
+ * 
+ * 1. **TypedEventトレイト**: 各イベント型に固有の型情報を保持
+ * 2. **ジェネリックハンドラ**: 型パラメータによる明示的な型指定
+ * 3. **to_event_data** メソッド: イベント自身による適切な変換ロジック
+ * 4. **from_event_dataメソッド**: 型安全な逆変換機能
+ * 
+ * これにより、イベントの公開から購読までの全プロセスにおいて型の整合性が保証されます。
  */
 use std::any::{Any, TypeId};
 use std::collections::HashMap;

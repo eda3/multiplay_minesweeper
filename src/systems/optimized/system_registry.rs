@@ -204,24 +204,27 @@ impl SystemRegistry {
     /// 安全な読み取り専用バッチアクセス
     pub fn with_resources<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&ResourceBatch<dyn Resource>) -> R,
+        F: FnOnce(&ResourceBatch) -> R,
     {
-        // 空のリソースバッチを作成して関数を呼び出し
-        let batch = ResourceBatch { resource: &EmptyResource as &dyn Resource };
+        // リソースマネージャーを使ってバッチを作成
+        let batch = ResourceBatch {
+            resources: &self.resource_manager
+        };
+        
         f(&batch)
     }
     
     /// バッチ処理（読み書き）のための安全なアクセスを提供
     pub fn with_resources_mut<F, R>(&mut self, f: F) -> R
     where
-        F: FnOnce(&mut ResourceBatchMut<dyn Resource>) -> R,
+        F: FnOnce(&mut ResourceBatchMut) -> R,
     {
-        // 安全でない静的可変参照を使用する必要がある
-        // この場合は単一のスレッドでのみ使用されるため安全
-        unsafe {
-            let mut batch = ResourceBatchMut { resource: &mut *(&raw mut EMPTY_RESOURCE as *mut dyn Resource) };
-            f(&mut batch)
-        }
+        // リソースマネージャーを使ってバッチを作成
+        let mut batch = ResourceBatchMut {
+            resources: &mut self.resource_manager
+        };
+        
+        f(&mut batch)
     }
     
     /// リソースが存在するかチェック
@@ -576,11 +579,4 @@ impl SystemRegistry {
         );
         self.register(rate_controlled_cell_reveal);
     }
-}
-
-/// 空のリソース実装（with_resourcesメソッド用）
-struct EmptyResource;
-// ブランケット実装があるので個別実装は削除
-
-// 静的なEmptyResourceのインスタンス
-static mut EMPTY_RESOURCE: EmptyResource = EmptyResource; 
+} 
