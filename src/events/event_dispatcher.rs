@@ -44,7 +44,30 @@ impl EventDispatcher {
             callbacks: HashMap::new(),
             next_id: 1,
             subscription_map: HashMap::new(),
-            event_queue: VecDeque::new(),
+            // WASM環境でのメモリ効率化: 標準的なイベント数に合わせて初期容量を8に設定
+            // イベントディスパッチャーはやや低レベルな処理で、キューに大量のイベントが溜まる前に処理される想定
+            event_queue: VecDeque::with_capacity(8),
+        }
+    }
+    
+    /// 特定の初期容量でイベントディスパッチャーを作成
+    /// 
+    /// # 引数
+    /// 
+    /// * `queue_capacity` - イベントキューの初期容量
+    /// 
+    /// # 例
+    /// 
+    /// ```
+    /// // 高頻度イベント処理用に大きめの容量を指定
+    /// let dispatcher = EventDispatcher::with_capacity(32);
+    /// ```
+    pub fn with_capacity(queue_capacity: usize) -> Self {
+        Self {
+            callbacks: HashMap::new(),
+            next_id: 1,
+            subscription_map: HashMap::new(),
+            event_queue: VecDeque::with_capacity(queue_capacity),
         }
     }
     

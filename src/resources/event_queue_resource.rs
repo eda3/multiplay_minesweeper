@@ -35,7 +35,27 @@ impl EventQueueResource {
     /// 新しいイベントキューリソースを作成
     pub fn new() -> Self {
         Self {
-            events: VecDeque::new(),
+            // WASM環境でのメモリ効率化のため、初期容量16に設定
+            // マインスイーパーでは1フレームあたりの平均イベント数は10前後と想定
+            events: VecDeque::with_capacity(16),
+        }
+    }
+    
+    /// 特定の初期容量でイベントキューリソースを作成
+    /// 
+    /// # 引数
+    /// 
+    /// * `capacity` - キューの初期容量
+    /// 
+    /// # 例
+    /// 
+    /// ```
+    /// // 大量のイベントが予想される場合は大きめの容量を指定
+    /// let queue = EventQueueResource::with_capacity(64);
+    /// ```
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            events: VecDeque::with_capacity(capacity),
         }
     }
     

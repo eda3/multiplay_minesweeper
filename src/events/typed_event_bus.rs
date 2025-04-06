@@ -227,15 +227,23 @@ pub struct TypedEventBus {
 impl TypedEventBus {
     /// 新しいイベントバスを作成
     pub fn new() -> Self {
+        // WASM環境でのメモリ効率化のため、適切な初期容量を設定
+        let max_history_size = 100;
+        
         Self {
-            handlers: Arc::new(RwLock::new(HashMap::new())),
-            event_history: Arc::new(RwLock::new(Vec::new())),
-            typed_event_history: Arc::new(RwLock::new(HashMap::new())),
-            event_queue: Arc::new(RwLock::new(BinaryHeap::new())),
+            // ハンドラーは通常10種類以下のイベントタイプを処理
+            handlers: Arc::new(RwLock::new(HashMap::with_capacity(10))),
+            // 履歴は最大サイズに合わせて初期化
+            event_history: Arc::new(RwLock::new(Vec::with_capacity(max_history_size))),
+            // 同様にタイプ別履歴も適切な容量で初期化
+            typed_event_history: Arc::new(RwLock::new(HashMap::with_capacity(10))),
+            // イベントキューは通常のゲームフレームで処理できる量を初期容量に設定
+            event_queue: Arc::new(RwLock::new(BinaryHeap::with_capacity(20))),
             batch_mode: Arc::new(RwLock::new(false)),
-            max_history_size: 100,
+            max_history_size,
             debug: false,
-            global_processors: Arc::new(RwLock::new(Vec::new())),
+            // グローバルプロセッサは通常少数
+            global_processors: Arc::new(RwLock::new(Vec::with_capacity(5))),
         }
     }
     
@@ -243,6 +251,25 @@ impl TypedEventBus {
     pub fn with_debug(mut self, debug: bool) -> Self {
         self.debug = debug;
         self
+    }
+    
+    /// デバッグモードとカスタム容量設定のイベントバスを作成
+    pub fn with_capacity(
+        handlers_capacity: usize,
+        queue_capacity: usize,
+        history_capacity: usize,
+        max_history_size: usize
+    ) -> Self {
+        Self {
+            handlers: Arc::new(RwLock::new(HashMap::with_capacity(handlers_capacity))),
+            event_history: Arc::new(RwLock::new(Vec::with_capacity(history_capacity))),
+            typed_event_history: Arc::new(RwLock::new(HashMap::with_capacity(handlers_capacity))),
+            event_queue: Arc::new(RwLock::new(BinaryHeap::with_capacity(queue_capacity))),
+            batch_mode: Arc::new(RwLock::new(false)),
+            max_history_size,
+            debug: false,
+            global_processors: Arc::new(RwLock::new(Vec::with_capacity(5))),
+        }
     }
     
     /// 履歴サイズを設定
