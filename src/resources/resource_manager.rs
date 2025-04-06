@@ -42,6 +42,7 @@ use std::fmt::Debug;
 use std::rc::Rc;
 
 use super::resource_trait::Resource;
+use super::{ResourceBatch, ResourceBatchMut};
 
 /// リソースの取得に失敗した場合のエラー
 #[derive(Debug, Clone)]
@@ -557,15 +558,12 @@ impl ResourceManager {
     /// ```rust
     /// manager.batch(|batch| {
     ///     // 複数のリソースを参照
-    ///     let config = batch.get_by_type::<GameConfigResource>().unwrap();
-    ///     let board = batch.get_by_type::<BoardResource>().unwrap();
+    ///     let config = batch.get::<GameConfigResource>();
+    ///     let board = batch.get::<BoardResource>();
     ///     
     ///     // リソースを使った処理
-    ///     let difficulty = config.borrow().difficulty();
-    ///     let board_size = board.borrow().size();
-    ///     
     ///     // 結果を返す
-    ///     (difficulty, board_size)
+    ///     (config, board)
     /// });
     /// ```
     pub fn batch<F, T>(&self, f: F) -> T
@@ -573,7 +571,7 @@ impl ResourceManager {
         F: FnOnce(&ResourceBatch) -> T,
     {
         let batch = ResourceBatch {
-            manager: self,
+            resources: self,
         };
         
         f(&batch)
@@ -590,13 +588,11 @@ impl ResourceManager {
     /// ```rust
     /// manager.batch_mut(|batch| {
     ///     // 複数のリソースを取得して更新
-    ///     if let (Ok(config), Ok(board)) = (
-    ///         batch.get_by_type_mut::<GameConfigResource>(),
-    ///         batch.get_by_type_mut::<BoardResource>()
+    ///     if let (Some(config), Some(board)) = (
+    ///         batch.get_mut::<GameConfigResource>(),
+    ///         batch.get_mut::<BoardResource>()
     ///     ) {
     ///         // リソースを更新
-    ///         config.borrow_mut().set_difficulty(Difficulty::Expert);
-    ///         board.borrow_mut().resize(30, 16);
     ///     }
     /// });
     /// ```
@@ -605,7 +601,7 @@ impl ResourceManager {
         F: FnOnce(&mut ResourceBatchMut) -> T,
     {
         let mut batch = ResourceBatchMut {
-            manager: self,
+            resources: self,
         };
         
         f(&mut batch)
@@ -791,7 +787,7 @@ impl ResourceManager {
     /// 同じ型のリソースは取得できません（型安全性の確保のため）。
     pub fn get_many_mut<A: Resource, B: Resource>(&self) -> Option<(Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>)> {
         // 基本的には get_many と同じ実装ですが、
-        // 呼び出し側で片方を可変として扱う意図を示すためのメソッドです
+        // 呼び出し側で両方を可変として扱う意図を示すためのメソッドです
         self.get_many::<A, B>()
     }
     
@@ -804,161 +800,46 @@ impl ResourceManager {
         // 呼び出し側で両方を可変として扱う意図を示すためのメソッドです
         self.get_many::<A, B>()
     }
-}
-
-/// リソースバッチ - 複数のリソースに対する読み取り専用アクセス
-///
-/// リソースマネージャの `batch` メソッドから取得され、
-/// 複数のリソースへの読み取り専用アクセスを提供します。
-///
-/// リソースの参照はRc<RefCell>を通じて行われるため、
-/// 実行時借用チェックによる安全性を確保しています。
-pub struct ResourceBatch<'a> {
-    manager: &'a ResourceManager,
-}
-
-impl<'a> ResourceBatch<'a> {
-    /// リソースを取得
-    pub fn get<R: Resource + Clone>(&self, _name: &str) -> Option<Rc<RefCell<R>>> {
-        self.manager.get_resource::<R>(_name)
+    
+    /// 3つのリソースを同時に取得（読み取り専用）
+    /// 
+    /// 異なる型の3つのリソースを同時に取得します。
+    /// 同じ型のリソースは取得できません（型安全性の確保のため）。
+    pub fn get_many3<A: Resource, B: Resource, C: Resource>(&self) -> Option<(Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>)> {
+        let type_id_a = TypeId::of::<A>();
+        let type_id_b = TypeId::of::<B>();
+        let type_id_c = TypeId::of::<C>();
+        
+        // 同じ型が含まれていないかチェック
+        if type_id_a == type_id_b || type_id_a == type_id_c || type_id_b == type_id_c {
+            return None;
+        }
+        
+        let a = self.resources.get(&type_id_a)?.resource.clone();
+        let b = self.resources.get(&type_id_b)?.resource.clone();
+        let c = self.resources.get(&type_id_c)?.resource.clone();
+        
+        Some((a, b, c))
     }
     
-    /// リソースを型のみで取得
-    pub fn get_by_type<R: Resource>(&self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
-        self.manager.get::<R>()
+    /// 3つのリソースを同時に取得（1つのみ可変）
+    /// 
+    /// 異なる型の3つのリソースを同時に取得し、3つ目を可変として扱います。
+    /// 同じ型のリソースは取得できません（型安全性の確保のため）。
+    pub fn get_many3_mut<A: Resource, B: Resource, C: Resource>(&self) -> Option<(Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>)> {
+        // 基本的には get_many3 と同じ実装ですが、
+        // 呼び出し側で3つ目を可変として扱う意図を示すためのメソッドです
+        self.get_many3::<A, B, C>()
     }
     
-    /// リソースを型のみで取得し、指定した型にダウンキャスト
-    pub fn get_as<R: Resource + Clone>(&self) -> ResourceResult<Rc<RefCell<R>>> {
-        self.manager.get_as::<R>()
-    }
-    
-    /// リソースがあるかどうかを確認
-    pub fn contains<R: Resource>(&self) -> bool {
-        self.manager.contains::<R>()
-    }
-    
-    /// リソースの数を取得
-    pub fn len(&self) -> usize {
-        self.manager.len()
-    }
-    
-    /// バッチが空かどうかを取得
-    pub fn is_empty(&self) -> bool {
-        self.manager.is_empty()
-    }
-    
-    /// リソースの初期化状態を取得
-    pub fn get_init_status<R: Resource>(&self) -> Option<InitStatus> {
-        let type_id = TypeId::of::<R>();
-        self.manager.get_init_status(&type_id)
-    }
-    
-    /// リソースの依存関係を取得
-    pub fn get_dependencies<R: Resource>(&self) -> Option<&HashSet<TypeId>> {
-        let type_id = TypeId::of::<R>();
-        self.manager.get_dependencies(&type_id)
-    }
-    
-    /// 初期化順序を取得
-    pub fn get_init_order(&self) -> &[TypeId] {
-        self.manager.get_init_order()
-    }
-}
-
-/// 可変リソースバッチ - 複数のリソースに対する読み書きアクセス
-///
-/// リソースマネージャの `batch_mut` メソッドから取得され、
-/// 複数のリソースへの読み書きアクセスを提供します。
-///
-/// リソースの参照はRc<RefCell>を通じて行われるため、
-/// 実行時借用チェックによる安全性を確保しています。
-///
-/// # 注意
-///
-/// 同じリソースに対して複数の可変参照を取得すると、
-/// 実行時借用チェックによってパニックが発生する可能性があります。
-/// これは、RefCellの借用ルールによるものです。
-pub struct ResourceBatchMut<'a> {
-    manager: &'a mut ResourceManager,
-}
-
-impl<'a> ResourceBatchMut<'a> {
-    /// リソースを取得（読み取り専用）
-    pub fn get<R: Resource + Clone>(&self, _name: &str) -> Option<Rc<RefCell<R>>> {
-        self.manager.get_resource::<R>(_name)
-    }
-    
-    /// リソースを取得（可変）
-    pub fn get_mut<R: Resource + Clone>(&mut self, _name: &str) -> Option<Rc<RefCell<R>>> {
-        self.manager.get_resource::<R>(_name)
-    }
-    
-    /// リソースを型のみで取得（読み取り専用）
-    pub fn get_by_type<R: Resource>(&self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
-        self.manager.get::<R>()
-    }
-    
-    /// リソースを型のみで取得（可変）
-    pub fn get_by_type_mut<R: Resource>(&mut self) -> ResourceResult<Rc<RefCell<dyn Any>>> {
-        self.manager.get_mut::<R>()
-    }
-    
-    /// リソースを型のみで取得し、指定した型にダウンキャスト（読み取り専用）
-    pub fn get_as<R: Resource + Clone>(&self) -> ResourceResult<Rc<RefCell<R>>> {
-        self.manager.get_as::<R>()
-    }
-    
-    /// リソースを追加
-    pub fn add<R: Resource>(&mut self, resource: R) -> ResourceResult<()> {
-        self.manager.add(resource)
-    }
-    
-    /// リソースを更新
-    pub fn update<R: Resource>(&mut self, resource: R) -> ResourceResult<()> {
-        self.manager.update(resource)
-    }
-    
-    /// リソースを追加または更新
-    pub fn add_or_update<R: Resource>(&mut self, resource: R) {
-        self.manager.add_or_update(resource)
-    }
-    
-    /// リソースを削除
-    pub fn remove<R: Resource>(&mut self) -> Result<(), ResourceError> {
-        self.manager.remove::<R>()
-    }
-    
-    /// リソースがあるかどうかを確認
-    pub fn contains<R: Resource>(&self) -> bool {
-        self.manager.contains::<R>()
-    }
-    
-    /// リソースの数を取得
-    pub fn len(&self) -> usize {
-        self.manager.len()
-    }
-    
-    /// バッチが空かどうかを取得
-    pub fn is_empty(&self) -> bool {
-        self.manager.is_empty()
-    }
-    
-    /// リソースの初期化状態を取得
-    pub fn get_init_status<R: Resource>(&self) -> Option<InitStatus> {
-        let type_id = TypeId::of::<R>();
-        self.manager.get_init_status(&type_id)
-    }
-    
-    /// リソースの依存関係を取得
-    pub fn get_dependencies<R: Resource>(&self) -> Option<&HashSet<TypeId>> {
-        let type_id = TypeId::of::<R>();
-        self.manager.get_dependencies(&type_id)
-    }
-    
-    /// 初期化順序を取得
-    pub fn get_init_order(&self) -> &[TypeId] {
-        self.manager.get_init_order()
+    /// 3つのリソースを同時に取得（2つが可変）
+    /// 
+    /// 異なる型の3つのリソースを同時に取得し、2つ目と3つ目を可変として扱います。
+    /// 同じ型のリソースは取得できません（型安全性の確保のため）。
+    pub fn get_many3_mut2<A: Resource, B: Resource, C: Resource>(&self) -> Option<(Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>, Rc<RefCell<dyn Any>>)> {
+        // 基本的には get_many3 と同じ実装ですが、
+        // 呼び出し側で2つ目と3つ目を可変として扱う意図を示すためのメソッドです
+        self.get_many3::<A, B, C>()
     }
 }
 

@@ -467,9 +467,4 @@ impl World {
             Some((&*a_ptr, &mut *b_ptr, &mut *c_ptr))
         }
     }
-}
-
-// ダミーリソース（一時的な実装用）
-struct DummyResource;
-
-struct VoidResource; 
+} 
