@@ -1,7 +1,39 @@
 /**
  * リソースマネージャー
  * 
- * ゲーム全体のリソースを管理するクラス
+ * ゲーム全体のリソースを管理するクラス。
+ * 型安全なリソース管理と、バッチ処理によるパフォーマンス最適化を提供します。
+ * 
+ * # 使用例
+ * 
+ * ```rust
+ * // リソースの追加
+ * let mut manager = ResourceManager::new();
+ * manager.add(GameConfigResource::new())?;
+ * manager.add(BoardResource::new(10, 10))?;
+ * 
+ * // リソースの取得と使用
+ * if let Ok(rc) = manager.get::<GameConfigResource>() {
+ *     let config = rc.borrow();
+ *     println!("難易度: {}", config.difficulty());
+ * }
+ * 
+ * // 複数リソースへのアクセス（バッチ処理）
+ * manager.batch(|batch| {
+ *     if let Ok(config_rc) = batch.get_by_type::<GameConfigResource>() {
+ *         let config = config_rc.borrow();
+ *         // 設定を使った処理
+ *     }
+ * });
+ * 
+ * // 複数リソースの更新（バッチ処理）
+ * manager.batch_mut(|batch| {
+ *     if let Ok(board_rc) = batch.get_by_type::<BoardResource>() {
+ *         let mut board = board_rc.borrow_mut();
+ *         // ボードの更新
+ *     }
+ * });
+ * ```
  */
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
@@ -172,6 +204,26 @@ impl ResourceManager {
     //
     
     /// 複数のリソースに対して読み取り専用の操作を行う
+    ///
+    /// バッチ処理を使用すると、複数のリソースを一度に安全に参照できます。
+    /// これにより、リソース間の依存関係を明示的に表現できます。
+    ///
+    /// # 例
+    ///
+    /// ```rust
+    /// manager.batch(|batch| {
+    ///     // 複数のリソースを参照
+    ///     let config = batch.get_by_type::<GameConfigResource>().unwrap();
+    ///     let board = batch.get_by_type::<BoardResource>().unwrap();
+    ///     
+    ///     // リソースを使った処理
+    ///     let difficulty = config.borrow().difficulty();
+    ///     let board_size = board.borrow().size();
+    ///     
+    ///     // 結果を返す
+    ///     (difficulty, board_size)
+    /// });
+    /// ```
     pub fn batch<F, T>(&self, f: F) -> T
     where
         F: FnOnce(&ResourceBatch) -> T,
@@ -184,6 +236,26 @@ impl ResourceManager {
     }
     
     /// 複数のリソースに対して書き込み操作を行う
+    ///
+    /// バッチ処理を使用すると、複数のリソースを一度に安全に更新できます。
+    /// これにより、リソース間の依存関係を明示的に表現し、
+    /// 更新のアトミック性を確保できます。
+    ///
+    /// # 例
+    ///
+    /// ```rust
+    /// manager.batch_mut(|batch| {
+    ///     // 複数のリソースを取得して更新
+    ///     if let (Ok(config), Ok(board)) = (
+    ///         batch.get_by_type_mut::<GameConfigResource>(),
+    ///         batch.get_by_type_mut::<BoardResource>()
+    ///     ) {
+    ///         // リソースを更新
+    ///         config.borrow_mut().set_difficulty(Difficulty::Expert);
+    ///         board.borrow_mut().resize(30, 16);
+    ///     }
+    /// });
+    /// ```
     pub fn batch_mut<F, T>(&mut self, f: F) -> T
     where
         F: FnOnce(&mut ResourceBatchMut) -> T,
@@ -248,6 +320,12 @@ impl ResourceManager {
 }
 
 /// リソースバッチ - 複数のリソースに対する読み取り専用アクセス
+///
+/// リソースマネージャの `batch` メソッドから取得され、
+/// 複数のリソースへの読み取り専用アクセスを提供します。
+///
+/// リソースの参照はRc<RefCell>を通じて行われるため、
+/// 実行時借用チェックによる安全性を確保しています。
 pub struct ResourceBatch<'a> {
     manager: &'a ResourceManager,
 }
@@ -280,6 +358,18 @@ impl<'a> ResourceBatch<'a> {
 }
 
 /// 可変リソースバッチ - 複数のリソースに対する読み書きアクセス
+///
+/// リソースマネージャの `batch_mut` メソッドから取得され、
+/// 複数のリソースへの読み書きアクセスを提供します。
+///
+/// リソースの参照はRc<RefCell>を通じて行われるため、
+/// 実行時借用チェックによる安全性を確保しています。
+///
+/// # 注意
+///
+/// 同じリソースに対して複数の可変参照を取得すると、
+/// 実行時借用チェックによってパニックが発生する可能性があります。
+/// これは、RefCellの借用ルールによるものです。
 pub struct ResourceBatchMut<'a> {
     manager: &'a mut ResourceManager,
 }
