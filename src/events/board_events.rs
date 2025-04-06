@@ -11,6 +11,7 @@ use crate::events::EventData;
 use crate::impl_event;
 use crate::impl_typed_event;
 use crate::impl_typed_event_with_conversion;
+use crate::impl_timestamped_event;
 use crate::models::cell::{CellState, CellValue};
 use crate::models::coordinate::Coordinate;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -55,6 +56,8 @@ pub struct CellRevealedEvent {
     pub value: CellValue,
     /// チェーン反応で開いたかどうか
     pub is_chain: bool,
+    /// タイムスタンプ
+    pub _timestamp: u64,
 }
 
 /// 複数セル開示イベント - 複数のセルが同時に開示されたことを表す
@@ -66,13 +69,15 @@ pub struct MultipleCellsRevealedEvent {
     pub is_chain: bool,
 }
 
-/// 地雷爆発イベント
-#[derive(Debug, Clone, PartialEq)]
+/// 地雷爆発イベント - 地雷が爆発したことを表す
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MineExplodedEvent {
     /// 爆発した地雷の座標
     pub coord: Coordinate,
-    /// ゲームオーバーになるかどうか
+    /// ゲームオーバーかどうか
     pub is_game_over: bool,
+    /// タイムスタンプ
+    pub _timestamp: u64,
 }
 
 /// ボード初期化イベント - ボードが初期化されたことを表す
@@ -109,14 +114,59 @@ impl_event!(MineExplodedEvent, "MineExploded");
 impl_event!(BoardInitializedEvent, "BoardInitialized");
 impl_event!(GameProgressEvent, "GameProgress");
 
-// TypedEvent実装（個別実装）
-impl_typed_event_with_conversion!(CellRevealedEvent, |event: &CellRevealedEvent| Some(EventData::CellRevealed(event.clone())));
-impl_typed_event_with_conversion!(MineExplodedEvent, |event: &MineExplodedEvent| Some(EventData::MineExploded(event.clone())));
-impl_typed_event_with_conversion!(BoardInitializedEvent, |event: &BoardInitializedEvent| Some(EventData::BoardInitialized(event.clone())));
-impl_typed_event_with_conversion!(MultipleCellsRevealedEvent, |event: &MultipleCellsRevealedEvent| Some(EventData::MultipleCellsRevealed(event.clone())));
-impl_typed_event_with_conversion!(GameProgressEvent, |event: &GameProgressEvent| Some(EventData::GameProgress(event.clone())));
-
-// その他のイベント用にデフォルト実装
+// イベントの型安全な実装
 impl_typed_event!(CellStateChangeEvent);
 impl_typed_event!(BulkCellStateChangeEvent);
-impl_typed_event!(FlagPlacedEvent); 
+impl_typed_event!(FlagPlacedEvent);
+
+// タイムスタンプ付きイベントの実装
+impl_timestamped_event!(MineExplodedEvent);
+impl_timestamped_event!(CellRevealedEvent);
+
+// 型変換付きイベントの実装
+impl_typed_event_with_conversion!(CellRevealedEvent, |event: &CellRevealedEvent| 
+    Some(EventData::CellRevealed(event.clone())));
+
+impl_typed_event_with_conversion!(MineExplodedEvent, |event: &MineExplodedEvent| 
+    Some(EventData::MineExploded(event.clone())));
+
+impl_typed_event_with_conversion!(BoardInitializedEvent, |event: &BoardInitializedEvent| 
+    Some(EventData::BoardInitialized(event.clone())));
+
+impl_typed_event_with_conversion!(MultipleCellsRevealedEvent, |event: &MultipleCellsRevealedEvent| 
+    Some(EventData::MultipleCellsRevealed(event.clone())));
+
+impl_typed_event_with_conversion!(GameProgressEvent, |event: &GameProgressEvent| 
+    Some(EventData::GameProgress(event.clone())));
+
+// イベント作成メソッドの実装
+impl CellRevealedEvent {
+    pub fn new(coord: Coordinate, value: CellValue, is_chain: bool) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+            
+        Self {
+            coord,
+            value,
+            is_chain,
+            _timestamp: now,
+        }
+    }
+}
+
+impl MineExplodedEvent {
+    pub fn new(coord: Coordinate, is_game_over: bool) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+            
+        Self {
+            coord,
+            is_game_over,
+            _timestamp: now,
+        }
+    }
+} 

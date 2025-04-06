@@ -13,43 +13,56 @@ use crate::events::typed_event::{TypedEvent, HandlerId, generate_id};
 /// 型付きイベントハンドラ関数の型定義
 pub type TypedEventHandlerFn<E> = Arc<dyn Fn(&E) + Send + Sync + 'static>;
 
+/// イベント処理結果の型定義
+pub type EventResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+/// イベント処理の継続制御
+pub enum EventControl {
+    /// イベント処理を継続
+    Continue,
+    /// イベント処理を中断
+    Break,
+}
+
 /// 型付きイベントハンドラ
 /// 具体的なイベント型に対するハンドラ
 pub struct TypedEventHandler<E: TypedEvent> {
     /// ハンドラの一意なID
     pub id: HandlerId,
-    /// ハンドラの名前（デバッグ用）
+    /// ハンドラの名前
     pub name: String,
-    /// イベント処理関数
-    handler: TypedEventHandlerFn<E>,
-    /// 優先度（高い値ほど先に実行）
-    pub priority: i32,
-    /// 有効・無効状態
+    /// 実際のハンドラ関数
+    pub handler: Box<dyn Fn(&E) -> EventControl + Send + Sync>,
+    /// 優先度（低いほど先に処理）
+    pub priority: u8,
+    /// 有効状態
     pub enabled: Arc<Mutex<bool>>,
-    /// 一度だけ実行するかどうか
+    /// 一度だけ実行するフラグ
     pub once: bool,
+    /// エラーハンドラ
+    error_handler: Option<Arc<dyn Fn(Box<dyn std::error::Error + Send + Sync>) + Send + Sync>>,
 }
 
 impl<E: TypedEvent> TypedEventHandler<E> {
-    /// 新しいイベントハンドラを作成
+    /// 新しい型付きイベントハンドラを作成
     pub fn new<F>(name: &str, handler: F) -> Self 
     where
-        F: Fn(&E) + Send + Sync + 'static
+        F: Fn(&E) -> EventControl + Send + Sync + 'static
     {
-        let id = generate_id();
         Self {
-            id: HandlerId::new::<E>(id),
+            id: HandlerId::new::<E>(generate_id()),
             name: name.to_string(),
-            handler: Arc::new(handler),
+            handler: Box::new(handler),
             priority: 0,
             enabled: Arc::new(Mutex::new(true)),
             once: false,
+            error_handler: None,
         }
     }
     
     /// 優先度を設定
     pub fn with_priority(mut self, priority: i32) -> Self {
-        self.priority = priority;
+        self.priority = priority as u8;
         self
     }
     
@@ -71,20 +84,46 @@ impl<E: TypedEvent> TypedEventHandler<E> {
         self.enabled.lock().map(|guard| *guard).unwrap_or(false)
     }
     
+    /// エラーハンドラを設定
+    pub fn with_error_handler<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(Box<dyn std::error::Error + Send + Sync>) + Send + Sync + 'static
+    {
+        self.error_handler = Some(Arc::new(handler));
+        self
+    }
+    
+    /// エラーを処理
+    fn handle_error(&self, error: Box<dyn std::error::Error + Send + Sync>) {
+        if let Some(handler) = &self.error_handler {
+            handler(error);
+        } else {
+            // デフォルトのエラー処理（ログ出力など）
+            log::error!("ハンドラ '{}' でエラーが発生: {}", self.name, error);
+        }
+    }
+    
     /// イベントを処理
-    pub fn handle(&self, event: &E) {
-        if self.is_enabled() {
-            (self.handler)(event);
+    pub fn handle(&self, event: &E) -> EventControl {
+        if *self.enabled.lock().unwrap() {
+            // 実行して結果を返す
+            let result = (self.handler)(event);
             
+            // ワンショットフラグが立っている場合は無効化
             if self.once {
-                self.set_enabled(false);
+                *self.enabled.lock().unwrap() = false;
             }
+            
+            result
+        } else {
+            // 無効なハンドラは何もせず続行
+            EventControl::Continue
         }
     }
     
     /// ハンドラ関数を取得
-    pub fn handler(&self) -> Arc<dyn Fn(&E) + Send + Sync> {
-        self.handler.clone()
+    pub fn handler(&self) -> &(dyn Fn(&E) -> EventControl + Send + Sync) {
+        &*self.handler
     }
 }
 
@@ -97,20 +136,14 @@ impl<E: TypedEvent> Debug for TypedEventHandler<E> {
             .field("priority", &self.priority)
             .field("enabled", &self.is_enabled())
             .field("once", &self.once)
+            .field("has_error_handler", &self.error_handler.is_some())
             .finish()
     }
 }
 
 impl<E: TypedEvent> Clone for TypedEventHandler<E> {
     fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            name: self.name.clone(),
-            handler: self.handler.clone(),
-            priority: self.priority,
-            enabled: self.enabled.clone(),
-            once: self.once,
-        }
+        unimplemented!("TypedEventHandlerをクローンできません - IDを使用して参照してください")
     }
 }
 
@@ -136,7 +169,7 @@ pub trait AnyHandler: Send + Sync {
     fn is_once(&self) -> bool;
     
     /// イベントを処理（Any型経由）
-    fn handle_any(&self, event: &dyn Any);
+    fn handle_any(&self, event: &dyn Any) -> EventControl;
     
     /// ハンドラのクローンを作成
     fn box_clone(&self) -> Box<dyn AnyHandler>;
@@ -152,7 +185,7 @@ impl<E: TypedEvent> AnyHandler for TypedEventHandler<E> {
     }
     
     fn priority(&self) -> i32 {
-        self.priority
+        self.priority as i32
     }
     
     fn is_enabled(&self) -> bool {
@@ -167,9 +200,12 @@ impl<E: TypedEvent> AnyHandler for TypedEventHandler<E> {
         self.once
     }
     
-    fn handle_any(&self, event: &dyn Any) {
+    fn handle_any(&self, event: &dyn Any) -> EventControl {
         if let Some(typed_event) = event.downcast_ref::<E>() {
-            self.handle(typed_event);
+            self.handle(typed_event)
+        } else {
+            // 型が一致しない場合は処理をスキップして継続
+            EventControl::Continue
         }
     }
     
@@ -201,20 +237,24 @@ impl<E: TypedEvent> TypedHandlerCollection<E> {
             .position(|h| h.priority < handler.priority)
             .unwrap_or(self.handlers.len());
         
+        // ハンドラを挿入
         self.handlers.insert(pos, handler);
     }
     
-    /// 指定IDのハンドラを削除
+    /// ハンドラを削除
     pub fn remove(&mut self, handler_id: HandlerId) -> bool {
         let len = self.handlers.len();
         self.handlers.retain(|h| h.id != handler_id);
-        len != self.handlers.len()
+        self.handlers.len() < len
     }
     
     /// イベントを処理
     pub fn handle(&self, event: &E) {
         for handler in &self.handlers {
-            handler.handle(event);
+            match handler.handle(event) {
+                EventControl::Continue => continue,
+                EventControl::Break => break,
+            }
         }
     }
     
@@ -240,60 +280,58 @@ impl<E: TypedEvent> Default for TypedHandlerCollection<E> {
     }
 }
 
-/// 型消去されたハンドラコレクションのトレイト
+/// すべての型のハンドラに対応するトレイト
 pub trait AnyHandlerCollection: Send + Sync {
-    /// イベントを処理
+    /// 型を消去したイベントを処理
     fn handle_any(&self, event: &dyn Any);
     
-    /// 指定IDのハンドラを削除
-    fn remove(&mut self, handler_id: HandlerId) -> bool;
+    /// ハンドラを削除
+    fn remove_handler(&mut self, handler_id: HandlerId) -> bool;
     
-    /// すべてのハンドラを削除
-    fn clear(&mut self);
+    /// Any型への変換
+    fn as_any(&self) -> &dyn Any;
     
-    /// ハンドラ数を取得
+    /// Any型への可変参照を取得
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    
+    /// ハンドラの数を取得
     fn len(&self) -> usize;
     
-    /// コレクションが空かどうか
-    fn is_empty(&self) -> bool;
-    
-    /// 型消去されたコレクションをクローン
-    fn box_clone(&self) -> Box<dyn AnyHandlerCollection>;
-    
-    /// 任意の型へのダウンキャスト用にAny型へのアクセスを提供
-    fn as_any_mut(&mut self) -> &mut dyn Any;
+    /// ハンドラが空かどうかを確認
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
+/// TypedHandlerCollectionに対するAnyHandlerCollectionの実装
 impl<E: TypedEvent> AnyHandlerCollection for TypedHandlerCollection<E> {
     fn handle_any(&self, event: &dyn Any) {
+        // ダウンキャストを試みる
         if let Some(typed_event) = event.downcast_ref::<E>() {
             self.handle(typed_event);
         }
     }
     
-    fn remove(&mut self, handler_id: HandlerId) -> bool {
-        TypedHandlerCollection::<E>::remove(self, handler_id)
+    fn remove_handler(&mut self, handler_id: HandlerId) -> bool {
+        self.remove(handler_id)
     }
     
-    fn clear(&mut self) {
-        TypedHandlerCollection::<E>::clear(self)
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
     
     fn len(&self) -> usize {
         self.handlers.len()
     }
-    
-    fn is_empty(&self) -> bool {
-        self.handlers.is_empty()
-    }
-    
-    fn box_clone(&self) -> Box<dyn AnyHandlerCollection> {
-        Box::new(TypedHandlerCollection {
-            handlers: self.handlers.clone(),
-        })
-    }
-    
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self as &mut dyn Any
-    }
+}
+
+/// 型消去されたハンドラコレクションをダウンキャストするユーティリティ関数
+pub fn downcast_handler_collection<E: TypedEvent>(
+    collection: &mut Box<dyn AnyHandlerCollection + Send + Sync>
+) -> Option<&mut TypedHandlerCollection<E>> {
+    collection.as_any_mut().downcast_mut::<TypedHandlerCollection<E>>()
 } 

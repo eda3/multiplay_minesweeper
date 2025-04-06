@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use crate::resources::{ResourceManager, BoardResource, GameStateResource};
+use crate::resources::{ResourceManager, BoardResource, GameStateResource, TypedEventBusResource};
 use crate::events::board_events::{
     CellRevealedEvent, MultipleCellsRevealedEvent, MineExplodedEvent,
     GameProgressEvent, BulkCellStateChangeEvent
@@ -27,6 +27,7 @@ use crate::ecs::system::System;
 use crate::ecs::system::SystemResult;
 use crate::entities::EntityManager;
 use crate::board::Board;
+use crate::events::typed_handler::EventControl;
 
 /// セル公開システムのイベント種類
 #[derive(Debug, Clone)]
@@ -68,6 +69,7 @@ impl TypedCellRevealSystem {
                         event.timestamp()
                     );
                 }
+                EventControl::Continue
             },
             resources
         );
@@ -93,6 +95,7 @@ impl TypedCellRevealSystem {
                         event.timestamp()
                     );
                 }
+                EventControl::Continue
             },
             resources
         );
@@ -179,6 +182,10 @@ impl TypedCellRevealSystem {
                             MineExplodedEvent {
                                 coord: event.coord.clone(),
                                 is_game_over: true,
+                                _timestamp: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_millis() as u64,
                             },
                             resources
                         );
@@ -245,6 +252,10 @@ impl TypedCellRevealSystem {
                     MineExplodedEvent {
                         coord: coord.clone(),
                         is_game_over: true,
+                        _timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
                     },
                     resources
                 );
@@ -281,6 +292,10 @@ impl TypedCellRevealSystem {
                         coord: coord.clone(),
                         value: CellValue::Empty(0),
                         is_chain: true,
+                        _timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
                     },
                     resources
                 );
@@ -294,6 +309,10 @@ impl TypedCellRevealSystem {
                         coord: coord.clone(),
                         value: value.clone(),
                         is_chain: false,
+                        _timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
                     },
                     resources
                 );

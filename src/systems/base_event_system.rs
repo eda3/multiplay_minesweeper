@@ -71,20 +71,17 @@ impl<T: Debug + Clone + Send> EventQueue<T> {
             timestamp,
         };
         
-        // 優先度に基づいて適切な位置に挿入
+        // 優先度に応じてキューの適切な位置に追加
         match priority {
-            EventPriority::High => {
+            EventPriority::Highest | EventPriority::High => {
                 // 高優先度イベントは先頭に追加
                 self.queue.push_front(request);
                 self.high_priority_count += 1;
             },
             EventPriority::Normal => {
-                // 通常優先度イベントは高優先度の後ろに挿入
-                if self.high_priority_count > 0 {
-                    self.queue.insert(self.high_priority_count, request);
-                } else {
-                    self.queue.push_front(request);
-                }
+                // 通常優先度イベントは高優先度の後に追加
+                let index = self.high_priority_count;
+                self.queue.insert(index, request);
                 self.normal_priority_count += 1;
             },
             EventPriority::Low => {
@@ -92,8 +89,8 @@ impl<T: Debug + Clone + Send> EventQueue<T> {
                 self.queue.push_back(request);
                 self.low_priority_count += 1;
             },
-            EventPriority::Background => {
-                // バックグラウンド優先度イベントは最後に追加
+            EventPriority::Lowest => {
+                // 最低優先度イベントは最後に追加
                 self.queue.push_back(request);
                 self.low_priority_count += 1;
             },
@@ -106,10 +103,11 @@ impl<T: Debug + Clone + Send> EventQueue<T> {
         
         // カウンタを更新
         match request.priority {
+            EventPriority::Highest => self.high_priority_count = self.high_priority_count.saturating_sub(1),
             EventPriority::High => self.high_priority_count = self.high_priority_count.saturating_sub(1),
             EventPriority::Normal => self.normal_priority_count = self.normal_priority_count.saturating_sub(1),
             EventPriority::Low => self.low_priority_count = self.low_priority_count.saturating_sub(1),
-            EventPriority::Background => self.low_priority_count = self.low_priority_count.saturating_sub(1),
+            EventPriority::Lowest => self.low_priority_count = self.low_priority_count.saturating_sub(1),
         }
         
         // タイムスタンプを更新

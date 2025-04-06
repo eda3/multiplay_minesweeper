@@ -65,8 +65,7 @@ thread_local! {
  */
 #[wasm_bindgen]
 pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
-    // パニック時にログ出力するようにする（開発モードのみ）
-    #[cfg(all(target_arch = "wasm32", debug_assertions))]
+    // パニック時にログ出力するようにする
     console_error_panic_hook::set_once();
     
     // ゲーム状態の初期化
@@ -151,7 +150,6 @@ pub fn start_game(canvas_element: HtmlCanvasElement) -> Result<(), JsValue> {
 }
 
 // パニックハンドラのセットアップ
-#[cfg(target_arch = "wasm32")]
 extern crate console_error_panic_hook;
 
 /**
@@ -162,16 +160,12 @@ extern crate console_error_panic_hook;
  */
 #[wasm_bindgen]
 pub fn init_game(canvas_id: &str) -> Result<(), JsValue> {
-    // パニックハンドラを設定（開発モードのみ）
-    #[cfg(all(target_arch = "wasm32", debug_assertions))]
+    // パニックハンドラを設定
     console_error_panic_hook::set_once();
     
-    // ロガーを初期化（開発モードのみ）
-    #[cfg(all(target_arch = "wasm32", debug_assertions))]
-    {
-        wasm_logger::init(wasm_logger::Config::default());
-        log::info!("Wasm logger initialized");
-    }
+    // ロガーを初期化
+    wasm_logger::init(wasm_logger::Config::default());
+    log::info!("Wasm logger initialized");
     
     // TODO: ECSベースのゲーム初期化を実装
     // 一時的な空実装
@@ -311,4 +305,8 @@ fn setup_event_listeners(canvas_id: &str) -> Result<(), JsValue> {
 #[cfg(test)]
 mod tests {
     // テストケースをここに書く
-} 
+}
+
+// マクロのエクスポート
+// pub use crate::impl_typed_event;
+// pub use crate::impl_timestamped_event; 

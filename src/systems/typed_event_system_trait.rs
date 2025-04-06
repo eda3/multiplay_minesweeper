@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::events::typed_event::{TypedEvent, HandlerId};
 use crate::events::typed_event_bus::EventPriority;
-use crate::events::typed_handler::{TypedEventHandler, AnyHandler};
+use crate::events::typed_handler::{TypedEventHandler, AnyHandler, EventControl};
 use crate::resources::{ResourceManager, TypedEventBusResource};
 
 /// 型安全なイベントハンドラを管理するシステム
@@ -48,7 +48,7 @@ pub trait TypedEventSystemTrait: Send + Sync {
         resources: &ResourceManager
     ) -> Option<TypedEventHandler<E>>
     where 
-        F: Fn(&E) + Send + Sync + 'static,
+        F: Fn(&E) -> EventControl + Send + Sync + 'static,
     {
         let handler_key = format!("{}_{}", event_type_name, handler_name);
         

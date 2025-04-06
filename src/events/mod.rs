@@ -15,6 +15,12 @@ pub mod network_events;
 pub mod typed_event;     // 新しい型安全なイベントトレイト
 pub mod typed_handler;   // 新しい型安全なハンドラ
 pub mod typed_event_bus; // 新しい型安全なイベントバス
+pub mod handler;         // 新しいハンドラの実装
+pub mod processor;       // 新しいイベントプロセッサの実装
+pub mod event_data;      // イベントデータモジュール
+pub mod event_history;   // イベント履歴モジュール
+pub mod event_logger;    // イベントロガーモジュール
+// pub mod typed_event_processor;
 
 #[cfg(test)]
 mod tests;
@@ -26,8 +32,10 @@ pub use event_bus::EventBus;
 
 // 型安全なコンポーネントの再エクスポート
 pub use typed_event::{TypedEvent, HandlerId, TypedEventId};
-pub use typed_handler::{TypedEventHandler, TypedHandlerCollection};
-pub use typed_event_bus::TypedEventBus;
+pub use typed_handler::{TypedEventHandler, TypedHandlerCollection, EventControl, EventResult};
+pub use typed_event_bus::{TypedEventBus, EventPriority, ErrorPolicy, EventProcessingError};
+// pub use typed_event_macros::*; // 型安全なイベント定義マクロをエクスポート
+// pub use safeboard_events::*; // 型安全なボードイベントをエクスポート
 
 // 各種イベント型の再エクスポート
 pub use game_events::*;
@@ -35,7 +43,7 @@ pub use board_events::*;
 pub use input_events::*;
 pub use network_events::*;
 
-// イベントデータを包含するEnum型
+/// イベントデータを包含するEnum型
 #[derive(Debug, Clone)]
 pub enum EventData {
     // ゲームイベント
@@ -184,6 +192,45 @@ impl EventData {
             Self::AppState(e) => e.timestamp(),
         }
     }
+    
+    /// イベントのデータをJSON形式で取得
+    pub fn to_json(&self) -> serde_json::Value {
+        // イベントデータを基本的な形式で変換
+        let event_name = self.name();
+        let timestamp = self.timestamp();
+        
+        // 各イベント型に合わせた追加データを含めるためのオブジェクト
+        let mut data = serde_json::Map::new();
+        
+        // イベント型と時間を追加
+        data.insert("event_type".to_string(), serde_json::Value::String(event_name.to_string()));
+        data.insert("timestamp".to_string(), serde_json::Value::Number(serde_json::Number::from(timestamp)));
+        
+        // イベント固有のデータを追加
+        match self {
+            Self::GameStart(e) => {
+                // ゲーム開始イベントの詳細データ
+                // 例: プレイヤー名、難易度など
+            },
+            Self::CellRevealed(e) => {
+                // セル公開イベントの詳細データ
+                // 例: 座標、セルの値など
+                if let Some(coord_row) = e.coord.row.to_string().parse::<i64>().ok() {
+                    data.insert("row".to_string(), serde_json::Value::Number(serde_json::Number::from(coord_row)));
+                }
+                if let Some(coord_col) = e.coord.col.to_string().parse::<i64>().ok() {
+                    data.insert("col".to_string(), serde_json::Value::Number(serde_json::Number::from(coord_col)));
+                }
+                data.insert("is_chain".to_string(), serde_json::Value::Bool(e.is_chain));
+            },
+            // 他のイベント型も同様に処理
+            _ => {
+                // 基本情報のみ
+            }
+        }
+        
+        serde_json::Value::Object(data)
+    }
 }
 
 /// イベントシステムの初期化関数
@@ -193,5 +240,10 @@ pub fn init() -> EventBus {
 
 /// 型安全なイベントシステムの初期化関数
 pub fn init_typed() -> TypedEventBus {
-    TypedEventBus::new()
+    TypedEventBus::new(100) // 100件のイベント履歴を保持
+}
+
+// ヘルパー関数: デフォルトのイベントバスを作成
+pub fn create_event_bus() -> TypedEventBus {
+    TypedEventBus::new(100) // 100件のイベント履歴を保持
 } 

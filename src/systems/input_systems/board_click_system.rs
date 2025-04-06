@@ -117,9 +117,13 @@ impl System for BoardClickSystem {
                 } else {
                     // 左クリック時はセル公開イベントを発行
                     let reveal_event = CellRevealedEvent {
-                        coord,
+                        coord: coord.clone(),
                         value: CellValue::Unknown, // 実際の値は別のシステムで設定
                         is_chain: false,
+                        _timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
                     };
                     
                     self.publish_event(reveal_event, resources);
